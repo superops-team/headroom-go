@@ -3,15 +3,22 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"os"
+	"os/signal"
+	"syscall"
+	"time"
 
 	headroom "github.com/superops-team/headroom-go"
 	"github.com/superops-team/headroom-go/proxy"
 )
+
+var logger = slog.New(slog.NewTextHandler(os.Stderr, nil))
 
 func main() {
 	if len(os.Args) < 2 {
@@ -28,9 +35,9 @@ func main() {
 	case "proxy":
 		runProxy(fs)
 	case "version":
-		fmt.Println("headroom-go v0.1.0")
+		fmt.Println("headroom-go v0.3.0")
 	default:
-		fmt.Fprintln(os.Stderr, "unknown command:", subcmd)
+		logger.Error("unknown command", "cmd", subcmd)
 		printUsage()
 		os.Exit(1)
 	}
@@ -54,7 +61,7 @@ func runCompress(fs *flag.FlagSet) {
 	if *input != "" {
 		f, err := os.Open(*input)
 		if err != nil {
-			fmt.Fprintln(os.Stderr, "failed to open input:", err)
+			logger.Error("failed to open input", "err", err)
 			os.Exit(1)
 		}
 		defer f.Close()
@@ -63,14 +70,14 @@ func runCompress(fs *flag.FlagSet) {
 
 	data, err := io.ReadAll(reader)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "failed to read input:", err)
+		logger.Error("failed to read input", "err", err)
 		os.Exit(1)
 	}
 
 	// 将输入作为一条 user 消息压缩
 	out, err := headroom.CompressString(string(data), opts)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "compression failed:", err)
+		logger.Error("compression failed", "err", err)
 		os.Exit(1)
 	}
 
@@ -78,7 +85,7 @@ func runCompress(fs *flag.FlagSet) {
 	if *output != "" {
 		f, err := os.Create(*output)
 		if err != nil {
-			fmt.Fprintln(os.Stderr, "failed to create output:", err)
+			logger.Error("failed to create output", "err", err)
 			os.Exit(1)
 		}
 		defer f.Close()
@@ -94,8 +101,7 @@ func runCompress(fs *flag.FlagSet) {
 		if orig > 0 {
 			savings = float64(orig-comp) / float64(orig) * 100
 		}
-		fmt.Fprintf(os.Stderr, "Original: %d tokens | Compressed: %d tokens | Savings: %.1f%%\n",
-			orig, comp, savings)
+		logger.Info("compression stats", "original_tokens", orig, "compressed_tokens", comp, "savings_pct", fmt.Sprintf("%.1f%%", savings))
 	}
 }
 
@@ -119,15 +125,34 @@ func runProxy(fs *flag.FlagSet) {
 	}
 	handler := proxy.NewProxy(cfg)
 
-	fmt.Fprintf(os.Stderr, "headroom proxy listening on :%d (upstream: %s)\n", *port, *upstream)
-	if err := http.ListenAndServe(cfg.ListenAddr, handler); err != nil {
-		fmt.Fprintln(os.Stderr, "server error:", err)
+	srv := &http.Server{
+		Addr:    cfg.ListenAddr,
+		Handler: handler,
+	}
+
+	// 监听 OS 信号，实现优雅关闭
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	go func() {
+		<-ctx.Done()
+		logger.Info("shutting down...")
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		if err := srv.Shutdown(shutdownCtx); err != nil {
+			logger.Error("shutdown error", "err", err)
+		}
+	}()
+
+	logger.Info("proxy listening", "port", *port, "upstream", *upstream)
+	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		logger.Error("server error", "err", err)
 		os.Exit(1)
 	}
 }
 
 func printUsage() {
-	fmt.Fprint(os.Stderr, `headroom-go v0.1.0 — AI 上下文压缩层
+	fmt.Fprint(os.Stderr, `headroom-go v0.3.0 — AI 上下文压缩层
 
 Usage:
   headroom <command> [flags]

@@ -1,6 +1,7 @@
 package headroom
 
 import (
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -10,7 +11,7 @@ func TestCompress_MixedMessages(t *testing.T) {
 	// 构建长消息：JSON + 代码 + 文本，确保总长度足够触发真正压缩
 	var longLogBuilder strings.Builder
 	for i := 0; i < 50; i++ {
-		longLogBuilder.WriteString("[INFO] service=api user=user" + itoa(i) + " status=ok latency=12ms\n")
+		longLogBuilder.WriteString("[INFO] service=api user=user" + strconv.Itoa(i) + " status=ok latency=12ms\n")
 	}
 	longLog := longLogBuilder.String()
 
@@ -70,7 +71,7 @@ func TestCompress_Reversible(t *testing.T) {
 		t.Fatal(err)
 	}
 	content := result.Messages[0].Content
-	if !strings.Contains(content, "headroom:retrieve id=v1_") {
+	if !strings.Contains(content, "headroom:retrieve id=v2_") {
 		t.Errorf("reversible output missing retrieve marker, got: %s", content[:100])
 	}
 }

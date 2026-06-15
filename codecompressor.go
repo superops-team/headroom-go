@@ -2,6 +2,7 @@ package headroom
 
 import (
 	"regexp"
+	"strconv"
 	"strings"
 )
 
@@ -134,7 +135,7 @@ func collapseLongFunctions(lines []string) []string {
 				if bodyLen > 20 {
 					// 保留签名行 + 折叠标记 + 最后 3 行
 					out = append(out, line)
-					out = append(out, "  // ... ("+itoa(bodyLen)+" lines collapsed) ...")
+					out = append(out, "  // ... ("+strconv.Itoa(bodyLen)+" lines collapsed) ...")
 					lastStart := j - 3
 					if lastStart < start {
 						lastStart = start
@@ -166,7 +167,7 @@ func collapseLongFunctions(lines []string) []string {
 				bodyLen := j - start - 1
 				if bodyLen > 20 {
 					out = append(out, line)
-					out = append(out, "  // ... ("+itoa(bodyLen)+" lines collapsed) ...")
+					out = append(out, "  // ... ("+strconv.Itoa(bodyLen)+" lines collapsed) ...")
 					// 保留最后 3 行（加上闭合括号行 j）
 					lastStart := j - 3
 					if lastStart < start {
@@ -223,25 +224,4 @@ func lineIndent(s string) int {
 	return n
 }
 
-func itoa(n int) string {
-	if n == 0 {
-		return "0"
-	}
-	neg := false
-	if n < 0 {
-		neg = true
-		n = -n
-	}
-	var buf [20]byte
-	pos := len(buf)
-	for n > 0 {
-		pos--
-		buf[pos] = byte('0' + n%10)
-		n /= 10
-	}
-	if neg {
-		pos--
-		buf[pos] = '-'
-	}
-	return string(buf[pos:])
-}
+

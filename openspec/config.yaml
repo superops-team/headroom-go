@@ -1,8 +1,8 @@
 project: headroom-go
 domain: ai-context-compression
 language: go
-version: "0.1.0"
-description: Go 版本 Headroom — AI 上下文压缩层（Library + Proxy + CLI）
+version: "0.3.0"
+description: Go 版本 Headroom — AI 上下文压缩层（Library + Proxy + CLI），生产加固版
 
 standards:
   go:

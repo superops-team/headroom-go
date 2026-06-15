@@ -68,7 +68,7 @@ func Compress(messages []Message, opts Options) (*Result, error) {
 	ccr := getPackageCCR()
 	aligner := NewCacheAligner(CacheAlignerConfig{
 		Enabled: opts.AlignPrefix,
-		Version: "v0.1",
+		Version: "v0.3",
 	})
 
 	compressedMsgs := make([]Message, 0, len(messages))

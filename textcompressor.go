@@ -1,6 +1,7 @@
 package headroom
 
 import (
+	"strconv"
 	"strings"
 )
 
@@ -49,7 +50,7 @@ func CompressText(content string, cfg TextConfig) string {
 		if dupCount == 1 {
 			processed = append(processed, curProcLine)
 		} else {
-			processed = append(processed, curProcLine+" [x"+itoa(dupCount)+"]")
+			processed = append(processed, curProcLine+" [x"+strconv.Itoa(dupCount)+"]")
 		}
 		dupCount = 0
 	}
@@ -86,7 +87,7 @@ func CompressText(content string, cfg TextConfig) string {
 		if dupCount == 1 {
 			processed = append(processed, prevProc)
 		} else {
-			processed = append(processed, prevProc+" [x"+itoa(dupCount)+"]")
+			processed = append(processed, prevProc+" [x"+strconv.Itoa(dupCount)+"]")
 		}
 	}
 
@@ -102,7 +103,7 @@ func CompressText(content string, cfg TextConfig) string {
 			sb.WriteString("\n")
 		}
 		sb.WriteString("[...")
-		sb.WriteString(itoa(middleCount))
+		sb.WriteString(strconv.Itoa(middleCount))
 		sb.WriteString(" more lines...]\n")
 		for _, l := range tail {
 			sb.WriteString(l)

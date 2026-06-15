@@ -1,14 +1,17 @@
 package headroom
 
 import (
-	"crypto/sha1"
+	"crypto/sha256"
 	"encoding/hex"
 	"sync"
 	"time"
 )
 
+const defaultMaxEntries = 10000
+
 type CCRConfig struct {
-	TTL time.Duration // 条目过期时间，默认 24 小时
+	TTL        time.Duration // 条目过期时间，默认 24 小时
+	MaxEntries int           // 最大条目数，默认 10000
 }
 
 type ccrEntry struct {
@@ -27,28 +30,68 @@ func NewCCR(cfg CCRConfig) *CCR {
 	if cfg.TTL <= 0 {
 		cfg.TTL = 24 * time.Hour
 	}
-	return &CCR{
+	if cfg.MaxEntries <= 0 {
+		cfg.MaxEntries = defaultMaxEntries
+	}
+	c := &CCR{
 		data: make(map[string]*ccrEntry, 128),
 		cfg:  cfg,
 	}
+	// 后台 GC：每 30 分钟清理过期条目
+	go c.backgroundGC()
+	return c
 }
 
-// Store 保存原始内容与压缩内容，返回可检索 id（格式 v1_SHA1前12字符）。
+// backgroundGC 定期清理过期条目。
+func (c *CCR) backgroundGC() {
+	ticker := time.NewTicker(30 * time.Minute)
+	defer ticker.Stop()
+	for range ticker.C {
+		c.collectExpired()
+	}
+}
+
+// Store 保存原始内容与压缩内容，返回可检索 id（格式 v2_SHA256前12字符）。
 // 相同内容重复 Store 返回相同 id，且更新 StoredAt 时间。
 func (c *CCR) Store(original, compressed string, kind ContentKind) string {
 	// 惰性 GC：Store 前先清理过期条目
 	c.collectExpired()
 
-	id := "v1_" + sha1Prefix12(original)
+	id := "v2_" + sha256Prefix12(original)
 
 	c.mu.Lock()
 	defer c.mu.Unlock()
+
+	// MaxEntries 上限：FIFO 淘汰最旧条目
+	if c.cfg.MaxEntries > 0 && len(c.data) >= c.cfg.MaxEntries {
+		if _, exists := c.data[id]; !exists {
+			c.evictOldest()
+		}
+	}
+
 	c.data[id] = &ccrEntry{
 		Original: original,
 		Kind:     kind,
 		StoredAt: time.Now(),
 	}
 	return id
+}
+
+// evictOldest 淘汰最旧的条目（调用方需持有 c.mu 写锁）。
+func (c *CCR) evictOldest() {
+	var oldestID string
+	var oldestTime time.Time
+	first := true
+	for id, e := range c.data {
+		if first || e.StoredAt.Before(oldestTime) {
+			oldestID = id
+			oldestTime = e.StoredAt
+			first = false
+		}
+	}
+	if oldestID != "" {
+		delete(c.data, oldestID)
+	}
 }
 
 // Retrieve 按 id 取回原始内容。
@@ -60,7 +103,6 @@ func (c *CCR) Retrieve(id string) (string, bool) {
 		return "", false
 	}
 	if time.Since(e.StoredAt) > c.cfg.TTL {
-		// 理论上已过期：惰性清理会在 Store 时删除，这里做二次检查
 		return "", false
 	}
 	return e.Original, true
@@ -93,9 +135,9 @@ func (c *CCR) collectExpired() {
 	}
 }
 
-// sha1Prefix12 返回 SHA1 哈希的前 12 个十六进制字符。
-func sha1Prefix12(s string) string {
-	h := sha1.New()
+// sha256Prefix12 返回 SHA256 哈希的前 12 个十六进制字符。
+func sha256Prefix12(s string) string {
+	h := sha256.New()
 	h.Write([]byte(s))
 	sum := h.Sum(nil)
 	hex := hex.EncodeToString(sum)

@@ -1,6 +1,7 @@
 package headroom
 
 import (
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -54,7 +55,7 @@ func TestTextCompressor_30LinesNotCollapsed(t *testing.T) {
 	cfg := TextConfig{Aggressiveness: 0.5}
 	src := ""
 	for i := 1; i <= 30; i++ {
-		src += "line " + itoa(i) + " content\n"
+		src += "line " + strconv.Itoa(i) + " content\n"
 	}
 	out := CompressText(src, cfg)
 	if strings.Contains(out, "more lines") {
@@ -67,7 +68,7 @@ func TestTextCompressor_31LinesCollapsed(t *testing.T) {
 	cfg := TextConfig{Aggressiveness: 0.5}
 	src := ""
 	for i := 1; i <= 31; i++ {
-		src += "line " + itoa(i) + " content\n"
+		src += "line " + strconv.Itoa(i) + " content\n"
 	}
 	out := CompressText(src, cfg)
 	if !strings.Contains(out, "more lines") {

@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	headroom "github.com/superops-team/headroom-go"
 )
@@ -43,6 +44,12 @@ func TestProxy_Healthz(t *testing.T) {
 	body, _ := io.ReadAll(resp.Body)
 	if !strings.Contains(string(body), `"status":"ok"`) {
 		t.Errorf("unexpected body: %s", body)
+	}
+	if !strings.Contains(string(body), `"version":"v0.3.0"`) {
+		t.Errorf("version missing in body: %s", body)
+	}
+	if !strings.Contains(string(body), `"uptime"`) {
+		t.Errorf("uptime missing in body: %s", body)
 	}
 }
 
@@ -195,8 +202,98 @@ func TestProxy_ContentActuallyCompressed(t *testing.T) {
 		len(requestBody), len(receivedBody), 100.0*float64(len(requestBody)-len(receivedBody))/float64(len(requestBody)))
 }
 
+// 上游超时 → proxy 返回 502
+func TestProxy_UpstreamTimeout(t *testing.T) {
+	mock := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		time.Sleep(2 * time.Second)
+		io.WriteString(w, `{"choices":[]}`)
+	}))
+	defer mock.Close()
+
+	// 注入短超时 HTTP Client，模拟上游超时
+	shortClient := &http.Client{Timeout: 100 * time.Millisecond}
+	p := NewProxy(Config{
+		UpstreamBaseURL: mock.URL,
+		CompressOptions: headroom.Options{Aggressiveness: 0.5, Reversible: false},
+		HTTPClient:      shortClient,
+	})
+	server := httptest.NewServer(p)
+	defer server.Close()
+
+	// 测试客户端用长超时，确保是 proxy 内部超时触发
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Post(server.URL+"/v1/chat/completions", "application/json",
+		strings.NewReader(`{"messages":[{"role":"user","content":"hi"}]}`))
+	if err != nil {
+		t.Fatalf("unexpected client error: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusBadGateway {
+		t.Errorf("got status %d, want 502 Bad Gateway", resp.StatusCode)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	if !strings.Contains(string(body), "upstream") {
+		t.Errorf("expected upstream error in body, got: %s", body)
+	}
+}
+
 // 便捷函数：JSON 字符串转义
 func jsonEscape(s string) string {
 	b, _ := json.Marshal(s)
 	return string(b)
+}
+
+// Request ID：不带 X-Request-ID 时自动生成
+func TestProxy_RequestID_AutoGenerate(t *testing.T) {
+	mock := newUpstreamMock()
+	defer mock.Close()
+
+	p := NewProxy(Config{
+		UpstreamBaseURL: mock.URL,
+		CompressOptions: headroom.Options{Aggressiveness: 0.5, Reversible: false},
+	})
+	server := httptest.NewServer(p)
+	defer server.Close()
+
+	resp, err := http.Post(server.URL+"/v1/chat/completions", "application/json",
+		strings.NewReader(`{"messages":[{"role":"user","content":"hi"}]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	reqID := resp.Header.Get("X-Request-ID")
+	if reqID == "" {
+		t.Error("X-Request-ID header should be present")
+	}
+}
+
+// Request ID：带 X-Request-ID 时透传
+func TestProxy_RequestID_PassThrough(t *testing.T) {
+	mock := newUpstreamMock()
+	defer mock.Close()
+
+	p := NewProxy(Config{
+		UpstreamBaseURL: mock.URL,
+		CompressOptions: headroom.Options{Aggressiveness: 0.5, Reversible: false},
+	})
+	server := httptest.NewServer(p)
+	defer server.Close()
+
+	req, _ := http.NewRequest("POST", server.URL+"/v1/chat/completions",
+		strings.NewReader(`{"messages":[{"role":"user","content":"hi"}]}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Request-ID", "my-custom-id")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	reqID := resp.Header.Get("X-Request-ID")
+	if reqID != "my-custom-id" {
+		t.Errorf("got X-Request-ID=%q, want %q", reqID, "my-custom-id")
+	}
 }

@@ -1,6 +1,7 @@
 package headroom
 
 import (
+	"strconv"
 	"testing"
 	"time"
 )
@@ -14,9 +15,9 @@ func TestCCR_StoreAndRetrieve(t *testing.T) {
 	if id == "" {
 		t.Fatal("empty id")
 	}
-	// id 前缀应为 v1_
-	if len(id) < 4 || id[:3] != "v1_" {
-		t.Errorf("id should start with v1_, got %q", id)
+	// id 前缀应为 v2_
+	if len(id) < 4 || id[:3] != "v2_" {
+		t.Errorf("id should start with v2_, got %q", id)
 	}
 
 	retrieved, ok := c.Retrieve(id)
@@ -31,7 +32,7 @@ func TestCCR_StoreAndRetrieve(t *testing.T) {
 // 不存在的 id → false
 func TestCCR_RetrieveMissing(t *testing.T) {
 	c := NewCCR(CCRConfig{TTL: time.Hour})
-	_, ok := c.Retrieve("v1_deadbeef1234")
+	_, ok := c.Retrieve("v2_deadbeef1234")
 	if ok {
 		t.Error("retrieve of unknown id should return false")
 	}
@@ -71,5 +72,40 @@ func TestCCR_LazyGC(t *testing.T) {
 	count, _ := c.Stats()
 	if count != 2 {
 		t.Fatalf("before expiry: got %d entries, want 2", count)
+	}
+}
+
+// MaxEntries：超过上限时淘汰最旧条目
+func TestCCR_MaxEntries(t *testing.T) {
+	c := NewCCR(CCRConfig{TTL: time.Hour, MaxEntries: 100})
+	// Store 101 条不同内容
+	for i := 0; i < 101; i++ {
+		content := "entry-" + strconv.Itoa(i)
+		c.Store(content, content, KindText)
+	}
+	count, _ := c.Stats()
+	if count > 100 {
+		t.Errorf("MaxEntries=100 but got %d entries", count)
+	}
+}
+
+// 后台 GC：过期条目被 Ticker 清理
+func TestCCR_BackgroundGC(t *testing.T) {
+	c := NewCCR(CCRConfig{TTL: 50 * time.Millisecond, MaxEntries: 1000})
+	c.Store("will-expire", "x", KindText)
+
+	// 等待 TTL 过期 + Ticker 触发（30min 默认 ticker 太长，这里验证惰性 GC 即可）
+	// 后台 GC 的 Ticker 间隔为 30min，单元测试中不等待 Ticker。
+	// 验证：过期后 Retrieve 返回 false
+	time.Sleep(100 * time.Millisecond)
+	_, ok := c.Retrieve("v2_" + sha256Prefix12("will-expire"))
+	if ok {
+		t.Error("expired entry should not be retrievable")
+	}
+	// Store 触发惰性 GC，清理过期条目
+	c.Store("new-entry", "y", KindText)
+	count, _ := c.Stats()
+	if count != 1 {
+		t.Errorf("after GC: got %d entries, want 1", count)
 	}
 }
