@@ -1,0 +1,53 @@
+project: headroom-go
+domain: ai-context-compression
+language: go
+version: "0.1.0"
+description: Go 版本 Headroom — AI 上下文压缩层（Library + Proxy + CLI）
+
+standards:
+  go:
+    min_version: "1.22"
+    formatter: gofmt
+    linter: go vet
+    test_framework: go test ./...
+    external_dependencies: none  # 零外部依赖，仅标准库
+  naming:
+    exported_pascal: true
+    unexported_camel: true
+    package_snake_lowercase: false  # 根包 flat，无 pkg/ 子包
+  error_handling:
+    wrap_errors: true
+    never_panic_in_public_api: true
+    return_detailed_error_messages: true
+
+architecture:
+  pattern: flat-root-package
+  modules:
+    - content_kind   # 枚举定义
+    - router         # ContentRouter（O(n) 检测）
+    - smartcrusher   # JSON 压缩
+    - codecompressor # 代码启发式压缩
+    - textcompressor # 文本启发式压缩
+    - cachealigner   # 前缀对齐（可选）
+    - ccr            # 可逆存储（唯一有状态模块）
+    - proxy          # HTTP Proxy（非流式）
+    - headroom       # 根包：顶层 API 组合
+  cli: cmd/headroom  # 独立入口，零 cobra 依赖
+
+out_of_scope:
+  # 以下功能 v0.1 明确拒绝，不做
+  - ML 模型推理（启发式文本压缩已覆盖）
+  - Tree-sitter AST 绑定
+  - 流式响应支持（返回 400）
+  - 跨 Agent 持久化 Memory（SQLite/Redis）
+  - MCP Server、Copilot OAuth、Agent wrap 集成
+  - headroom learn / headroom perf
+
+v0_2_improvements:
+  - 默认 Aggressiveness 从 0.6 降至 0.5
+  - CacheAligner 默认关闭（AlignPrefix=false）
+  - 删除 Result.Original 冗余字段
+  - TokenLimit 替代无效的 Model 字段
+  - ContentKind 枚举显式赋值（不用 iota）
+  - CCR id 加 v1_ 版本前缀
+  - 明确流式响应边界
