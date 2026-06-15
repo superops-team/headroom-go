@@ -9,7 +9,8 @@ import (
 	"net/http"
 	"os"
 
-	"github.com/chopratejas/headroom-go"
+	headroom "github.com/superops-team/headroom-go"
+	"github.com/superops-team/headroom-go/proxy"
 )
 
 func main() {
@@ -110,13 +111,13 @@ func runProxy(fs *flag.FlagSet) {
 	opts.Aggressiveness = *aggressive
 	opts.Reversible = !*noRev
 
-	cfg := headroom.ProxyConfig{
+	cfg := proxy.Config{
 		UpstreamBaseURL: *upstream,
 		APIKey:          apiKey,
 		ListenAddr:      fmt.Sprintf(":%d", *port),
 		CompressOptions: opts,
 	}
-	handler := headroom.NewProxy(cfg)
+	handler := proxy.NewProxy(cfg)
 
 	fmt.Fprintf(os.Stderr, "headroom proxy listening on :%d (upstream: %s)\n", *port, *upstream)
 	if err := http.ListenAndServe(cfg.ListenAddr, handler); err != nil {

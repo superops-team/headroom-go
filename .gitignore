@@ -1,1 +1,15 @@
-*.log\nbin/\n.vscode/\n__pycache__/\n.DS_Store
+# Go build artifacts
+headroom
+*.out
+*.exe
+
+# Logs
+*.log
+
+# Editor / IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
