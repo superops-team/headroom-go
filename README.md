@@ -1,7 +1,8 @@
 # Headroom Go
 
-[![Go Report Card](https://goreportcard.com/badge/github.com/chopratejas/headroom-go)](https://goreportcard.com/report/github.com/chopratejas/headroom-go)
-[![Test Coverage](https://img.shields.io/badge/test%20coverage-100%25-brightgreen)](https://github.com/chopratejas/headroom-go)
+[![Go Report Card](https://goreportcard.com/badge/github.com/superops-team/headroom-go)](https://goreportcard.com/report/github.com/superops-team/headroom-go)
+[![Test Coverage](https://img.shields.io/badge/test%20coverage-100%25-brightgreen)](https://github.com/superops-team/headroom-go)
+[![GitHub Release](https://img.shields.io/github/v/release/superops-team/headroom-go)](https://github.com/superops-team/headroom-go/releases)
 
 A Go implementation of [headroom](https://github.com/chopratejas/headroom) - intelligent context compression for LLM applications. Reduce token usage by up to 70% while preserving semantic meaning.
 
@@ -20,14 +21,39 @@ A Go implementation of [headroom](https://github.com/chopratejas/headroom) - int
 
 ## Installation
 
+### Quick Install (Linux/macOS)
+
 ```bash
-go install github.com/chopratejas/headroom-go/cmd/headroom@latest
+# Install latest version
+curl -sSL https://raw.githubusercontent.com/superops-team/headroom-go/main/install.sh | bash
+
+# Install specific version
+curl -sSL https://raw.githubusercontent.com/superops-team/headroom-go/main/install.sh | bash -s -- v0.1.1
 ```
 
-Or add to your project:
+### From Source
+
 ```bash
-go get github.com/chopratejas/headroom-go
+go install github.com/superops-team/headroom-go/cmd/headroom@latest
 ```
+
+### Add to Project
+
+```bash
+go get github.com/superops-team/headroom-go
+```
+
+### Download Binary
+
+Download pre-built binaries from [Releases](https://github.com/superops-team/headroom-go/releases):
+
+| Platform | Architecture | Download |
+|----------|--------------|----------|
+| Linux | x86_64 | `headroom-linux-amd64` |
+| Linux | arm64 | `headroom-linux-arm64` |
+| macOS | x86_64 | `headroom-darwin-amd64` |
+| macOS | arm64 (Apple Silicon) | `headroom-darwin-arm64` |
+| Windows | x86_64 | `headroom-windows-amd64.exe` |
 
 ---
 
@@ -136,7 +162,8 @@ MIT
 
 # Headroom Go (中文)
 
-[![Go Report Card](https://goreportcard.com/badge/github.com/chopratejas/headroom-go)](https://goreportcard.com/report/github.com/chopratejas/headroom-go)
+[![Go Report Card](https://goreportcard.com/badge/github.com/superops-team/headroom-go)](https://goreportcard.com/report/github.com/superops-team/headroom-go)
+[![GitHub Release](https://img.shields.io/github/v/release/superops-team/headroom-go)](https://github.com/superops-team/headroom-go/releases)
 
 [headroom](https://github.com/chopratejas/headroom) 的 Go 语言实现 - 为 LLM 应用提供智能上下文压缩。在保留语义的同时，将 token 使用量减少多达 70%。
 
@@ -155,14 +182,39 @@ MIT
 
 ## 安装
 
+### 快速安装 (Linux/macOS)
+
 ```bash
-go install github.com/chopratejas/headroom-go/cmd/headroom@latest
+# 安装最新版本
+curl -sSL https://raw.githubusercontent.com/superops-team/headroom-go/main/install.sh | bash
+
+# 安装指定版本
+curl -sSL https://raw.githubusercontent.com/superops-team/headroom-go/main/install.sh | bash -s -- v0.1.1
 ```
 
-或添加到项目中：
+### 从源代码安装
+
 ```bash
-go get github.com/chopratejas/headroom-go
+go install github.com/superops-team/headroom-go/cmd/headroom@latest
 ```
+
+### 添加到项目中
+
+```bash
+go get github.com/superops-team/headroom-go
+```
+
+### 下载预编译二进制
+
+从 [Releases](https://github.com/superops-team/headroom-go/releases) 下载预编译二进制文件：
+
+| 平台 | 架构 | 文件名 |
+|------|------|--------|
+| Linux | x86_64 | `headroom-linux-amd64` |
+| Linux | arm64 | `headroom-linux-arm64` |
+| macOS | x86_64 | `headroom-darwin-amd64` |
+| macOS | arm64 (Apple Silicon) | `headroom-darwin-arm64` |
+| Windows | x86_64 | `headroom-windows-amd64.exe` |
 
 ---
 
