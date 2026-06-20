@@ -1,8 +1,8 @@
 project: headroom-go
 domain: ai-context-compression
 language: go
-version: "0.3.0"
-description: Go 版本 Headroom — AI 上下文压缩层（Library + Proxy + CLI），生产加固版
+version: "0.5.0"
+description: Go 版本 Headroom — AI 上下文压缩层（Library + Proxy + CLI），Spec A pipeline 与兼容 API 基线
 
 standards:
   go:
@@ -30,6 +30,9 @@ architecture:
     - textcompressor # 文本启发式压缩
     - cachealigner   # 前缀对齐（可选）
     - ccr            # 可逆存储（唯一有状态模块）
+    - engine         # CompressionEngine（v0.5.0 已存在）
+    - registry       # CompressorRegistry（v0.5.0 已存在）
+    - pipeline       # Spec A pipeline 压缩路径（可选启用）
     - proxy          # HTTP Proxy（非流式）
     - headroom       # 根包：顶层 API 组合
   cli: cmd/headroom  # 独立入口，零 cobra 依赖
@@ -51,3 +54,9 @@ v0_2_improvements:
   - ContentKind 枚举显式赋值（不用 iota）
   - CCR id 加 v1_ 版本前缀
   - 明确流式响应边界
+
+v0_5_baseline:
+  - Version = "v0.5.0"，PrefixVersion = "v0.5"
+  - CompressionEngine、CompressorRegistry、version.go 已存在，不从零创建
+  - 保留 SmartCrushJSON、CompressCode、CompressText、CacheAligner/NewCacheAligner、Compressor 等公开兼容 API
+  - Legacy CCR id 继续使用 v2_ 前缀；pipeline CCR 使用 v3_

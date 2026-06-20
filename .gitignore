@@ -13,3 +13,6 @@ headroom
 # OS
 .DS_Store
 Thumbs.db
+
+# Coco workspace
+.oh-my-code/

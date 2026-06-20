@@ -1,5 +1,7 @@
 # headroom-go v0.4.0 重构任务清单
 
+> 历史说明：当前仓库基线为 v0.5.0。`version.go`、`CompressionEngine`、`CompressorRegistry` 已存在；`SmartCrushJSON`、`CompressCode`、`CompressText`、`CacheAligner/NewCacheAligner`、`Compressor` 均为兼容 API，不得删除或改签名。下列 v0.4.0 删除/回退任务仅保留作历史记录，不作为当前执行要求。
+
 > 每个任务为原子任务，可独立开发、测试、验收。
 
 ## Phase 1：基础设施重构（不破坏现有代码）
@@ -16,7 +18,7 @@ package headroom
 
 const (
     // Version 是 headroom-go 的语义化版本。
-    Version = "v0.4.0"
+    Version = "v0.5.0"
 
     // PrefixVersion 是缓存对齐前缀的版本。
     // 每次压缩算法升级导致输出变化时应递增。
@@ -73,7 +75,7 @@ fmt.Println("headroom-go " + headroom.Version)
 ```
 
 **验收标准：**
-- [ ] `headroom version` 输出 `headroom-go v0.4.0`
+- [x] 当前基线：`headroom version` 输出 `headroom-go v0.5.0`
 - [ ] `headroom --help` 显示正确版本
 
 ---
@@ -90,7 +92,7 @@ fmt.Fprintf(w, `{"status":"ok","version":"%s","uptime":"%s"}`, headroom.Version,
 ```
 
 **验收标准：**
-- [ ] `curl localhost:8787/healthz` 返回包含 `"version":"v0.4.0"`
+- [x] 当前基线：`curl localhost:8787/healthz` 返回包含 `"version":"v0.5.0"`
 - [ ] `TestProxy_Healthz` 通过
 
 ---
@@ -123,13 +125,12 @@ func AlignPrefix(content string, enabled bool, version string) string {
 **文件：** `headroom.go`
 
 **变更：**
-- 删除 `import "github.com/superops-team/headroom-go/cachealigner"`（不存在了）
-- 删除 `aligner := NewCacheAligner(...)` 调用
-- 将 `if opts.AlignPrefix { out = aligner.Align(out) }` 替换为 `if opts.AlignPrefix { out = AlignPrefix(out, true, PrefixVersion) }`
+- v0.5.0 兼容基线保留 `NewCacheAligner(...)` 调用
+- `headroom.go` 继续通过 `NewCacheAligner(...)` 执行前缀对齐，以保持 v0.5.0 兼容基线
 
 **验收标准：**
-- [ ] `headroom.go` 中不再引用 `CacheAligner` 类型
-- [ ] 删除 `cachealigner.go` 和 `cachealigner_test.go`
+- [x] `headroom.go` 继续使用 `CacheAligner` 兼容 API
+- [x] v0.5.0 兼容基线保留 `cachealigner.go` 和 `cachealigner_test.go`
 - [ ] `go test ./...` 全部通过
 
 ---

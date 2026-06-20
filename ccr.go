@@ -63,10 +63,8 @@ func (c *CCR) Store(original, compressed string, kind ContentKind) string {
 	defer c.mu.Unlock()
 
 	// MaxEntries 上限：FIFO 淘汰最旧条目
-	if c.cfg.MaxEntries > 0 && len(c.data) >= c.cfg.MaxEntries {
-		if _, exists := c.data[id]; !exists {
-			c.evictOldest()
-		}
+	if c.shouldEvictBeforeStoreLocked(id) {
+		c.evictOldest()
 	}
 
 	c.data[id] = &ccrEntry{
@@ -75,6 +73,19 @@ func (c *CCR) Store(original, compressed string, kind ContentKind) string {
 		StoredAt: time.Now(),
 	}
 	return id
+}
+
+func (c *CCR) isFullLocked() bool {
+	return c.cfg.MaxEntries > 0 && len(c.data) >= c.cfg.MaxEntries
+}
+
+func (c *CCR) containsLocked(id string) bool {
+	_, exists := c.data[id]
+	return exists
+}
+
+func (c *CCR) shouldEvictBeforeStoreLocked(id string) bool {
+	return c.isFullLocked() && !c.containsLocked(id)
 }
 
 // evictOldest 淘汰最旧的条目（调用方需持有 c.mu 写锁）。

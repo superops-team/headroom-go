@@ -2,6 +2,7 @@ package proxy
 
 import (
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -11,6 +12,45 @@ import (
 
 	headroom "github.com/superops-team/headroom-go"
 )
+
+type errorReadCloser struct{}
+
+func (errorReadCloser) Read([]byte) (int, error) { return 0, errors.New("bad \"json\"\n错误") }
+func (errorReadCloser) Close() error             { return nil }
+
+type failingRoundTripper struct{}
+
+func (failingRoundTripper) RoundTrip(*http.Request) (*http.Response, error) {
+	return nil, errors.New("upstream \"offline\"\n错误")
+}
+
+func assertJSONError(t *testing.T, resp *http.Response, wantStatus int, wantContains string) {
+	t.Helper()
+	if resp.StatusCode != wantStatus {
+		data, _ := io.ReadAll(resp.Body)
+		t.Fatalf("status=%d want=%d body=%s", resp.StatusCode, wantStatus, data)
+	}
+	if ct := resp.Header.Get("Content-Type"); !strings.Contains(ct, "application/json") {
+		t.Fatalf("Content-Type %q should contain application/json", ct)
+	}
+	var body struct {
+		Error string `json:"error"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		t.Fatalf("error body is not valid JSON: %v", err)
+	}
+	if !strings.Contains(body.Error, wantContains) {
+		t.Fatalf("error %q should contain %q", body.Error, wantContains)
+	}
+}
+
+func TestWriteErrorEscapesSpecialCharacters(t *testing.T) {
+	rec := httptest.NewRecorder()
+	writeError(rec, http.StatusBadRequest, "bad \"json\"\n错误")
+	resp := rec.Result()
+	defer resp.Body.Close()
+	assertJSONError(t, resp, http.StatusBadRequest, "bad \"json\"\n错误")
+}
 
 // newUpstreamMock 模拟一个上游 LLM API server（供测试使用）
 func newUpstreamMock() *httptest.Server {
@@ -116,10 +156,7 @@ func TestProxy_StreamRejected(t *testing.T) {
 	if resp.StatusCode != 400 {
 		t.Errorf("got status %d, want 400", resp.StatusCode)
 	}
-	body, _ := io.ReadAll(resp.Body)
-	if !strings.Contains(string(body), "streaming not supported") {
-		t.Errorf("unexpected body: %s", body)
-	}
+	assertJSONError(t, resp, http.StatusBadRequest, "streaming not supported")
 }
 
 // 无效 JSON → 400
@@ -144,6 +181,7 @@ func TestProxy_InvalidJSON(t *testing.T) {
 	if resp.StatusCode != 400 {
 		t.Errorf("got status %d, want 400", resp.StatusCode)
 	}
+	assertJSONError(t, resp, http.StatusBadRequest, "invalid json")
 }
 
 // GET 其他路径 → 405 method not allowed
@@ -167,6 +205,50 @@ func TestProxy_MethodNotAllowed(t *testing.T) {
 	if resp.StatusCode != 405 {
 		t.Errorf("got status %d, want 405", resp.StatusCode)
 	}
+	assertJSONError(t, resp, http.StatusMethodNotAllowed, "method not allowed")
+}
+
+func TestProxy_ReadBodyErrorReturnsJSON(t *testing.T) {
+	p := NewProxy(Config{CompressOptions: headroom.DefaultOptions()})
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", errorReadCloser{})
+	rec := httptest.NewRecorder()
+	p.ServeHTTP(rec, req)
+	resp := rec.Result()
+	defer resp.Body.Close()
+	assertJSONError(t, resp, http.StatusBadRequest, "bad \"json\"\n错误")
+}
+
+func TestProxy_CompressionFailedReturnsJSON(t *testing.T) {
+	opts := headroom.DefaultOptions()
+	opts.TokenizerConfig = headroom.TokenizerConfig{Backend: "missing", AllowFallback: false}
+	p := NewProxy(Config{CompressOptions: opts})
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"messages":[{"role":"user","content":"hi"}]}`))
+	rec := httptest.NewRecorder()
+	p.ServeHTTP(rec, req)
+	resp := rec.Result()
+	defer resp.Body.Close()
+	assertJSONError(t, resp, http.StatusInternalServerError, "compression failed")
+}
+
+func TestProxy_UpstreamRequestFailedReturnsJSON(t *testing.T) {
+	p := NewProxy(Config{UpstreamBaseURL: "http://[::1", CompressOptions: headroom.DefaultOptions()})
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"gpt-4"}`))
+	rec := httptest.NewRecorder()
+	p.ServeHTTP(rec, req)
+	resp := rec.Result()
+	defer resp.Body.Close()
+	assertJSONError(t, resp, http.StatusBadGateway, "upstream request failed")
+}
+
+func TestProxy_UpstreamUnreachableReturnsJSON(t *testing.T) {
+	client := &http.Client{Transport: failingRoundTripper{}}
+	p := NewProxy(Config{UpstreamBaseURL: "http://example.invalid/v1", CompressOptions: headroom.DefaultOptions(), HTTPClient: client})
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"gpt-4"}`))
+	rec := httptest.NewRecorder()
+	p.ServeHTTP(rec, req)
+	resp := rec.Result()
+	defer resp.Body.Close()
+	assertJSONError(t, resp, http.StatusBadGateway, "upstream unreachable")
 }
 
 // 请求内容被真正压缩（验证：上游收到的 JSON 中 content 字段比原始短）

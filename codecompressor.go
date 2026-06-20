@@ -5,9 +5,11 @@ import (
 	"strings"
 )
 
-type CodeConfig struct {
+type CompressionConfig struct {
 	Aggressiveness float64
 }
+
+type CodeConfig = CompressionConfig
 
 // CompressCode 压缩代码文本。
 // 策略：移除注释/空行 → 折叠过长函数体 → 保留语义锚点。

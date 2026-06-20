@@ -2,6 +2,8 @@
 
 ## 1. 概述
 
+本规范是历史 v0.4.0 重构草案，保留用于追溯。当前基线为 v0.5.0：`version.go`、`CompressionEngine`、`CompressorRegistry` 已存在，且兼容策略要求保留旧公开 API。下文中“删除旧 API / 删除 CacheAligner / 回退到 v0.4.0”的条目已过期，不作为当前执行要求。
+
 本规范基于 Brooks-Lint 代码审查方法论，针对 headroom-go v0.3.0 进行系统性重构。审查发现代码在正确性和测试覆盖方面表现优秀（50/50 测试通过，含 `-race` 竞态检测），但结构性技术债务正在积累，主要集中在以下六个维度：
 
 - 认知过载（长函数、职责不清）
@@ -103,7 +105,7 @@ var compressRegistry = map[ContentKind]Compressor{
 3. 将 `codecompressor.go` 包装为 `CodeCompressor`（添加 `Kind()` 方法）
 4. 将 `textcompressor.go` 包装为 `TextCompressor`（添加 `Kind()` 方法）
 5. 创建 `compressRegistry` 并在 `headroom.go` 中使用
-6. 删除原有独立的 `SmartCrushJSON` / `CompressCode` / `CompressText` 函数导出（或保留为内部调用）
+6. 历史草案曾建议收敛独立函数导出；当前 v0.5.0 兼容基线要求继续保留 `SmartCrushJSON` / `CompressCode` / `CompressText` 函数导出。
 7. 运行全量测试回归
 
 ---
@@ -258,11 +260,10 @@ if opts.AlignPrefix {
 
 #### 3.5.3 验收标准
 
-- [ ] 删除 `CacheAligner` struct 和 `NewCacheAligner()` 构造函数
+- [x] v0.5.0 兼容决策：保留 `CacheAligner` struct 和 `NewCacheAligner()` 构造函数
 - [ ] 定义 `AlignPrefix(content string, enabled bool, version string) string` 纯函数
 - [ ] `headroom.go` 中使用新的函数调用
-- [ ] 删除 `cachealigner.go`（合并到 `headroom.go` 或单独的 `prefix.go`）
-- [ ] 删除 `cachealigner_test.go`（用新的单元测试替代）
+- [x] v0.5.0 兼容决策：保留 `cachealigner.go` 与 `cachealigner_test.go`
 - [ ] 现有测试全部通过
 
 ---
@@ -289,7 +290,7 @@ package headroom
 
 const (
     // Version 是 headroom-go 的语义化版本。
-    Version = "v0.4.0"
+    Version = "v0.5.0"
 
     // PrefixVersion 是缓存对齐前缀的版本。
     // 每次压缩算法升级导致输出变化时应递增。

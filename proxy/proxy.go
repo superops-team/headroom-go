@@ -49,6 +49,12 @@ func defaultHTTPClient() *http.Client {
 	}
 }
 
+func writeError(w http.ResponseWriter, code int, msg string) {
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(code)
+	_ = json.NewEncoder(w).Encode(map[string]string{"error": msg})
+}
+
 // Config 配置 headroom HTTP 代理。
 type Config struct {
 	UpstreamBaseURL string           // 上游 API Base URL（例如 https://api.openai.com/v1）
@@ -82,7 +88,7 @@ func NewProxy(cfg Config) http.Handler {
 
 	mux.HandleFunc("/v1/chat/completions", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
-			http.Error(w, `{"error":"method not allowed"}`, http.StatusMethodNotAllowed)
+			writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 			return
 		}
 
@@ -96,16 +102,14 @@ func NewProxy(cfg Config) http.Handler {
 
 		body, err := io.ReadAll(io.LimitReader(r.Body, maxRequestBodyBytes))
 		if err != nil {
-			w.Header().Set("Content-Type", "application/json")
-			http.Error(w, fmt.Sprintf(`{"error":"%s"}`, err.Error()), http.StatusBadRequest)
+			writeError(w, http.StatusBadRequest, err.Error())
 			return
 		}
 
 		// 解析为通用 JSON（保留未知字段以便转发）
 		var payload map[string]interface{}
 		if err := json.Unmarshal(body, &payload); err != nil {
-			w.Header().Set("Content-Type", "application/json")
-			http.Error(w, fmt.Sprintf(`{"error":"invalid json: %s"}`, err.Error()), http.StatusBadRequest)
+			writeError(w, http.StatusBadRequest, fmt.Sprintf("invalid json: %s", err.Error()))
 			return
 		}
 
@@ -133,31 +137,26 @@ func NewProxy(cfg Config) http.Handler {
 			// 其他类型（如 float64=1）：安全起见，不视为流式
 		}
 		if isStream {
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusBadRequest)
-			io.WriteString(w, `{"error":"streaming not supported in `+headroom.Version+`"}`)
+			writeError(w, http.StatusBadRequest, "streaming not supported in "+headroom.Version)
 			return
 		}
 
 		// 将 messages 反序列化为 []headroom.Message
 		messagesJSON, err := json.Marshal(messagesRaw)
 		if err != nil {
-			w.Header().Set("Content-Type", "application/json")
-			http.Error(w, fmt.Sprintf(`{"error":"%s"}`, err.Error()), http.StatusBadRequest)
+			writeError(w, http.StatusBadRequest, err.Error())
 			return
 		}
 		var msgs []headroom.Message
 		if err := json.Unmarshal(messagesJSON, &msgs); err != nil {
-			w.Header().Set("Content-Type", "application/json")
-			http.Error(w, fmt.Sprintf(`{"error":"invalid messages: %s"}`, err.Error()), http.StatusBadRequest)
+			writeError(w, http.StatusBadRequest, fmt.Sprintf("invalid messages: %s", err.Error()))
 			return
 		}
 
 		// 压缩 messages
 		compressed, err := headroom.Compress(msgs, cfg.CompressOptions)
 		if err != nil {
-			w.Header().Set("Content-Type", "application/json")
-			http.Error(w, fmt.Sprintf(`{"error":"compression failed: %s"}`, err.Error()), http.StatusInternalServerError)
+			writeError(w, http.StatusInternalServerError, fmt.Sprintf("compression failed: %s", err.Error()))
 			return
 		}
 
@@ -165,8 +164,7 @@ func NewProxy(cfg Config) http.Handler {
 		payload["messages"] = compressed.Messages
 		newBody, err := json.Marshal(payload)
 		if err != nil {
-			w.Header().Set("Content-Type", "application/json")
-			http.Error(w, fmt.Sprintf(`{"error":"%s"}`, err.Error()), http.StatusInternalServerError)
+			writeError(w, http.StatusInternalServerError, err.Error())
 			return
 		}
 
@@ -181,8 +179,7 @@ func forwardToUpstream(w http.ResponseWriter, r *http.Request, cfg Config, clien
 	req, err := http.NewRequestWithContext(r.Context(), http.MethodPost, url,
 		bytes.NewReader(body))
 	if err != nil {
-		w.Header().Set("Content-Type", "application/json")
-		http.Error(w, fmt.Sprintf(`{"error":"upstream request failed: %s"}`, err.Error()), http.StatusBadGateway)
+		writeError(w, http.StatusBadGateway, fmt.Sprintf("upstream request failed: %s", err.Error()))
 		return
 	}
 	req.Header.Set("Content-Type", "application/json")
@@ -199,8 +196,7 @@ func forwardToUpstream(w http.ResponseWriter, r *http.Request, cfg Config, clien
 
 	resp, err := client.Do(req)
 	if err != nil {
-		w.Header().Set("Content-Type", "application/json")
-		http.Error(w, fmt.Sprintf(`{"error":"upstream unreachable: %s"}`, err.Error()), http.StatusBadGateway)
+		writeError(w, http.StatusBadGateway, fmt.Sprintf("upstream unreachable: %s", err.Error()))
 		return
 	}
 	defer resp.Body.Close()

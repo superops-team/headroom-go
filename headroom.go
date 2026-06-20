@@ -59,6 +59,16 @@ type Result struct {
 	Steps            []CompressionStep
 }
 
+type legacySkipDecision struct {
+	skipped bool
+	step    CompressionStep
+}
+
+type legacyPostProcessResult struct {
+	content string
+	step    CompressionStep
+}
+
 // DefaultOptions 返回推荐的默认选项。
 func DefaultOptions() Options {
 	return Options{
@@ -100,64 +110,24 @@ func compressLegacy(messages []Message, opts Options, tokenizer Tokenizer, initi
 		}
 		origTokens += msgTokens
 
-		// assistant 角色：原样透传
-		if m.Role == "assistant" {
+		if skip := legacySkipMessage(m, opts, msgTokens); skip.skipped {
 			compressedMsgs = append(compressedMsgs, m)
 			compTokens += msgTokens
-			steps = append(steps, CompressionStep{Name: "skip_assistant", Kind: KindText.String(), TokensBefore: msgTokens, TokensAfter: msgTokens, Skipped: true, Reason: "assistant role"})
+			steps = append(steps, skip.step)
 			continue
 		}
 
-		// 跳过空内容
-		if strings.TrimSpace(m.Content) == "" {
-			compressedMsgs = append(compressedMsgs, m)
-			compTokens += msgTokens
-			steps = append(steps, CompressionStep{Name: "skip_empty", Kind: KindText.String(), TokensBefore: msgTokens, TokensAfter: msgTokens, Skipped: true, Reason: "empty content"})
-			continue
-		}
-
-		// TokenLimit 跳过（短内容不压缩）
-		if opts.TokenLimit > 0 && msgTokens < opts.TokenLimit {
-			compressedMsgs = append(compressedMsgs, m)
-			compTokens += msgTokens
-			steps = append(steps, CompressionStep{Name: "skip_token_limit", Kind: KindText.String(), TokensBefore: msgTokens, TokensAfter: msgTokens, Skipped: true, Reason: "below token limit"})
-			continue
-		}
-
-		// 检测内容类型并路由到对应压缩器
-		kind := router.Detect(m.Content)
-		out, err := DefaultCompressorRegistry().Compress(kind, m.Content, opts)
+		kind, out, err := routeAndCompressLegacy(router, DefaultCompressorRegistry(), m.Content, opts)
 		if err != nil {
-			return nil, fmt.Errorf("compress %s: %w", kind.String(), err)
+			return nil, err
 		}
 
-		// 对齐前缀（如果启用）
-		if opts.AlignPrefix {
-			out = aligner.Align(out)
+		post, err := postProcessLegacyCompression(m.Content, out, kind, opts, tokenizer, msgTokens, aligner, ccr)
+		if err != nil {
+			return nil, err
 		}
-
-		// 可逆压缩：在内容末尾附加 retrieve id
-		origLen := len(m.Content)
-		outLen := len(out)
-		if opts.Reversible {
-			id := ccr.Store(m.Content, out, kind)
-			retrieveSuffix := "\n\n[headroom:retrieve id=" + id + "]"
-			outLen += len(retrieveSuffix)
-			out = out + retrieveSuffix
-		}
-
-		// 良性降级：如果压缩输出比原文更长，直接用原文
-		if outLen >= origLen {
-			out = m.Content
-			outLen = origLen
-			steps = append(steps, CompressionStep{Name: "legacy_compress", Kind: kind.String(), TokensBefore: msgTokens, TokensAfter: msgTokens, Skipped: true, Reason: "output not shorter"})
-		} else {
-			outTokens, err := countTokens(tokenizer, out)
-			if err != nil {
-				return nil, err
-			}
-			steps = append(steps, CompressionStep{Name: "legacy_compress", Kind: kind.String(), TokensBefore: msgTokens, TokensAfter: outTokens})
-		}
+		out = post.content
+		steps = append(steps, post.step)
 
 		compressedMsgs = append(compressedMsgs, Message{
 			Role:    m.Role,
@@ -171,25 +141,81 @@ func compressLegacy(messages []Message, opts Options, tokenizer Tokenizer, initi
 		compTokens += outTokens
 	}
 
+	return buildLegacyResult(compressedMsgs, origTokens, compTokens, warnings, steps, observer), nil
+}
+
+func legacySkipMessage(m Message, opts Options, msgTokens int) legacySkipDecision {
+	baseStep := CompressionStep{Kind: KindText.String(), TokensBefore: msgTokens, TokensAfter: msgTokens, Skipped: true}
+	if m.Role == "assistant" {
+		baseStep.Name = "skip_assistant"
+		baseStep.Reason = "assistant role"
+		return legacySkipDecision{skipped: true, step: baseStep}
+	}
+	if strings.TrimSpace(m.Content) == "" {
+		baseStep.Name = "skip_empty"
+		baseStep.Reason = "empty content"
+		return legacySkipDecision{skipped: true, step: baseStep}
+	}
+	if opts.TokenLimit > 0 && msgTokens < opts.TokenLimit {
+		baseStep.Name = "skip_token_limit"
+		baseStep.Reason = "below token limit"
+		return legacySkipDecision{skipped: true, step: baseStep}
+	}
+	return legacySkipDecision{}
+}
+
+func routeAndCompressLegacy(router *ContentRouter, registry *CompressorRegistry, content string, opts Options) (ContentKind, string, error) {
+	kind := router.Detect(content)
+	out, err := registry.Compress(kind, content, opts)
+	if err != nil {
+		return kind, "", fmt.Errorf("compress %s: %w", kind.String(), err)
+	}
+	return kind, out, nil
+}
+
+func postProcessLegacyCompression(original, compressed string, kind ContentKind, opts Options, tokenizer Tokenizer, msgTokens int, aligner *CacheAligner, ccr *CCR) (legacyPostProcessResult, error) {
+	out := compressed
+	if opts.AlignPrefix {
+		out = aligner.Align(out)
+	}
+
+	origLen := len(original)
+	outLen := len(out)
+	if opts.Reversible {
+		id := ccr.Store(original, out, kind)
+		retrieveSuffix := "\n\n[headroom:retrieve id=" + id + "]"
+		outLen += len(retrieveSuffix)
+		out += retrieveSuffix
+	}
+
+	if outLen >= origLen {
+		return legacyPostProcessResult{
+			content: original,
+			step:    CompressionStep{Name: "legacy_compress", Kind: kind.String(), TokensBefore: msgTokens, TokensAfter: msgTokens, Skipped: true, Reason: "output not shorter"},
+		}, nil
+	}
+
+	outTokens, err := countTokens(tokenizer, out)
+	if err != nil {
+		return legacyPostProcessResult{}, err
+	}
+	return legacyPostProcessResult{
+		content: out,
+		step:    CompressionStep{Name: "legacy_compress", Kind: kind.String(), TokensBefore: msgTokens, TokensAfter: outTokens},
+	}, nil
+}
+
+func buildLegacyResult(messages []Message, origTokens, compTokens int, warnings []Warning, steps []CompressionStep, observer Observer) *Result {
 	savings := 0.0
 	if origTokens > 0 {
 		savings = float64(origTokens-compTokens) / float64(origTokens)
 	}
-
 	if observer != nil {
 		for _, step := range steps {
 			observer.ObserveCompressionStep(step)
 		}
 	}
-
-	return &Result{
-		Messages:         compressedMsgs,
-		CompressedTokens: compTokens,
-		OriginalTokens:   origTokens,
-		Savings:          savings,
-		Warnings:         warnings,
-		Steps:            steps,
-	}, nil
+	return &Result{Messages: messages, CompressedTokens: compTokens, OriginalTokens: origTokens, Savings: savings, Warnings: warnings, Steps: steps}
 }
 
 // CompressString 压缩单段文本。适合快速测试或单次内容压缩。

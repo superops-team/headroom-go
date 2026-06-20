@@ -2,7 +2,19 @@
 
 All notable changes to this project will be documented in this file.
 
-## [v0.5.0] - 2026-06-21
+## [v0.4.1] - 2026-06-21
+
+### Changed
+
+- Refactored Spec B APIs to keep existing interface compatibility while reducing coupling across compressor entry points.
+- Unified configuration loading and defaults so headroom, proxy, and compressor behavior share a consistent configuration surface.
+- Split large compression and proxy functions into smaller units to improve maintainability and targeted test coverage.
+
+### Added
+
+- Added Spec B end-to-end coverage plus expanded API compatibility, registry, headroom, proxy, CCR, and text compressor tests.
+
+## [v0.4.0] - 2026-06-21
 
 ### Added
 
@@ -14,7 +26,7 @@ All notable changes to this project will be documented in this file.
 ### Changed
 
 - Upgraded SmartCrusher, code compression, text compression, content-kind detection, routing, CLI, and proxy behavior to use the new compression pipeline.
-- Bumped package version metadata to `v0.5.0` and prefix metadata to `v0.5`.
+- Bumped package version metadata to `v0.4.0` and prefix metadata to `v0.4`.
 
 ### Fixed
 

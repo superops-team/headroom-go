@@ -1,12 +1,13 @@
 ---
 title: Headroom Go 规范说明书
-version: 0.2.0
-status: draft
+version: 0.5.0
+status: implemented
 domain: ai-context-compression
 owner: headroom-go
 created: 2026-06-14
 updated: 2026-06-14
 changelog:
+  - v0.5.0: Spec A pipeline、CompressionEngine、CompressorRegistry 与兼容 API 基线
   - v0.2.0: 修正版 — 删除冗余字段、明确模糊规则、补全协议边界
   - v0.1.0: 初稿
 ---
@@ -17,7 +18,7 @@ changelog:
 
 Headroom-Go 是 [headroom](https://github.com/chopratejas/headroom)（Python 版）的 Go 移植，核心目标：在发送给 LLM 之前，将 Agent 读取的一切（工具输出、日志、RAG 片段、文件、对话历史）压缩为更小的 token 量，同时保持语义准确性与可逆性。
 
-v0.1.0 为**最小可上线版本**，目标：单二进制、零外部依赖、Library API + HTTP Proxy + CLI。
+v0.5.0 为当前基线，目标：单二进制、零外部依赖、Library API + HTTP Proxy + CLI，并包含已存在的 `CompressionEngine`、`CompressorRegistry` 与 Spec A pipeline。历史旧 API（如 `SmartCrushJSON`、`CompressCode`、`CompressText`、`CacheAligner/NewCacheAligner`）继续作为兼容 API 保留。
 
 ### 与 Python 原版的组件对照
 
@@ -483,6 +484,13 @@ const (
     KindText ContentKind = 0
     KindJSON ContentKind = 1
     KindCode ContentKind = 2
+    KindDiff ContentKind = 3
+    KindLog ContentKind = 4
+    KindSearch ContentKind = 5
+    KindTabular ContentKind = 6
+    KindSpreadsheet ContentKind = 7
+    KindHTML ContentKind = 8
+    KindUnknown ContentKind = 9
 )
 func (k ContentKind) String() string
 
@@ -517,15 +525,16 @@ func NewContentRouter() *ContentRouter
 func (r *ContentRouter) Detect(content string) ContentKind
 
 // smartcrusher.go
-type SmartCrushConfig struct{ Aggressiveness float64 }
+type CompressionConfig struct{ Aggressiveness float64 }
+type SmartCrushConfig struct{ Aggressiveness float64; Observer Observer }
 func SmartCrushJSON(content string, cfg SmartCrushConfig) (string, error)
 
 // codecompressor.go
-type CodeConfig struct{ Aggressiveness float64 }
+type CodeConfig = CompressionConfig
 func CompressCode(content string, cfg CodeConfig) string
 
 // textcompressor.go
-type TextConfig struct{ Aggressiveness float64 }
+type TextConfig = CompressionConfig
 func CompressText(content string, cfg TextConfig) string
 
 // cachealigner.go

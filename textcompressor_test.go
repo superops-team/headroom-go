@@ -119,6 +119,13 @@ func TestTextCompressor_FlushTrailingDuplicateGroup(t *testing.T) {
 	}
 }
 
+func TestTextCompressor_FlushTripleDuplicateGroup(t *testing.T) {
+	out := CompressText("a\na\na", TextConfig{Aggressiveness: 0.1})
+	if out != "a [x3]" {
+		t.Fatalf("got %q", out)
+	}
+}
+
 func TestTextCompressor_FlushDuplicateGroupsSeparatedByBlank(t *testing.T) {
 	out := CompressText("a\na\n\nb\nb", TextConfig{Aggressiveness: 0.1})
 	if out != "a [x2]\nb [x2]" {
@@ -130,5 +137,12 @@ func TestTextCompressor_PreserveErrorBeforeBlankLine(t *testing.T) {
 	out := CompressText("[ERROR] the service is down\n\nnormal line", TextConfig{Aggressiveness: 0.5})
 	if !strings.Contains(out, "[ERROR] the service is down") {
 		t.Fatalf("ERROR line before blank should be preserved, got %q", out)
+	}
+}
+
+func TestTextCompressor_PreserveRepeatedErrorCount(t *testing.T) {
+	out := CompressText("ERROR failed\nERROR failed\nERROR failed", TextConfig{Aggressiveness: 0.9})
+	if out != "ERROR failed [x3]" {
+		t.Fatalf("got %q", out)
 	}
 }

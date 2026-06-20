@@ -28,7 +28,7 @@ A Go implementation of [headroom](https://github.com/chopratejas/headroom) - int
 curl -sSL https://raw.githubusercontent.com/superops-team/headroom-go/main/install.sh | bash
 
 # Install specific version
-curl -sSL https://raw.githubusercontent.com/superops-team/headroom-go/main/install.sh | bash -s -- v0.1.1
+curl -sSL https://raw.githubusercontent.com/superops-team/headroom-go/main/install.sh | bash -s -- v0.4.0
 ```
 
 ### From Source
@@ -79,7 +79,7 @@ package main
 
 import (
     "fmt"
-    "github.com/chopratejas/headroom-go"
+    headroom "github.com/superops-team/headroom-go"
 )
 
 func main() {
@@ -129,9 +129,10 @@ Run as an HTTP proxy compatible with OpenAI Chat Completions API:
 ```bash
 headroom proxy \
   --upstream https://api.openai.com/v1 \
-  --port 8080 \
-  --apikey your-api-key
+  --port 8080
 ```
+
+When running the CLI proxy, set `HEADROOM_API_KEY` when the proxy should inject an upstream API key.
 
 Then use `http://localhost:8080/v1/chat/completions` instead of OpenAI's endpoint.
 
@@ -189,7 +190,7 @@ MIT
 curl -sSL https://raw.githubusercontent.com/superops-team/headroom-go/main/install.sh | bash
 
 # 安装指定版本
-curl -sSL https://raw.githubusercontent.com/superops-team/headroom-go/main/install.sh | bash -s -- v0.1.1
+curl -sSL https://raw.githubusercontent.com/superops-team/headroom-go/main/install.sh | bash -s -- v0.4.0
 ```
 
 ### 从源代码安装
@@ -240,7 +241,7 @@ package main
 
 import (
     "fmt"
-    "github.com/chopratejas/headroom-go"
+    headroom "github.com/superops-team/headroom-go"
 )
 
 func main() {
@@ -290,9 +291,10 @@ func main() {
 ```bash
 headroom proxy \
   --upstream https://api.openai.com/v1 \
-  --port 8080 \
-  --apikey your-api-key
+  --port 8080
 ```
+
+通过 CLI 启动代理时，如需由代理注入上游 API Key，请设置 `HEADROOM_API_KEY` 环境变量。
 
 然后使用 `http://localhost:8080/v1/chat/completions` 代替 OpenAI 的端点。
 

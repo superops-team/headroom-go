@@ -5,9 +5,7 @@ import (
 	"strings"
 )
 
-type TextConfig struct {
-	Aggressiveness float64
-}
+type TextConfig = CompressionConfig
 
 // stopwords（英文，43 词）。基于日志/技术文档高频无用词。
 var stopwordSet = map[string]struct{}{
@@ -43,24 +41,12 @@ func CompressText(content string, cfg TextConfig) string {
 	var origLine string
 	dupCount := 0
 
-	flushDup := func(curProcLine string) {
-		if dupCount <= 0 || origLine == "" {
-			return
-		}
-		if dupCount == 1 {
-			processed = append(processed, curProcLine)
-		} else {
-			processed = append(processed, curProcLine+" [x"+strconv.Itoa(dupCount)+"]")
-		}
-		dupCount = 0
-	}
-
 	for _, line := range lines {
 		trimmed := strings.TrimSpace(line)
 
 		// 空行：flush 之前的计数，不保留空行
 		if trimmed == "" {
-			flushDup(removeStopwordsIfNeeded(origLine, cfg, isHighPriority(origLine)))
+			processed = flushDuplicateGroup(processed, origLine, removeStopwordsIfNeeded(origLine, cfg, isHighPriority(origLine)), dupCount)
 			origLine = ""
 			dupCount = 0
 			continue
@@ -76,7 +62,7 @@ func CompressText(content string, cfg TextConfig) string {
 		// 注意：先用 prevLine 生成"上一组"的输出行
 		if origLine != "" {
 			prevProc := removeStopwordsIfNeeded(origLine, cfg, isHighPriority(origLine))
-			flushDup(prevProc)
+			processed = flushDuplicateGroup(processed, origLine, prevProc, dupCount)
 		}
 		origLine = trimmed
 		dupCount = 1
@@ -84,11 +70,7 @@ func CompressText(content string, cfg TextConfig) string {
 	// flush 最后一组
 	if origLine != "" {
 		prevProc := removeStopwordsIfNeeded(origLine, cfg, isHighPriority(origLine))
-		if dupCount == 1 {
-			processed = append(processed, prevProc)
-		} else {
-			processed = append(processed, prevProc+" [x"+strconv.Itoa(dupCount)+"]")
-		}
+		processed = flushDuplicateGroup(processed, origLine, prevProc, dupCount)
 	}
 
 	// 超长段落折叠（>30 行）
@@ -113,6 +95,16 @@ func CompressText(content string, cfg TextConfig) string {
 	}
 
 	return strings.Join(processed, "\n")
+}
+
+func flushDuplicateGroup(processed []string, originalLine, processedLine string, count int) []string {
+	if count <= 0 || originalLine == "" {
+		return processed
+	}
+	if count == 1 {
+		return append(processed, processedLine)
+	}
+	return append(processed, processedLine+" [x"+strconv.Itoa(count)+"]")
 }
 
 // removeStopwords 从一行文本中移除英文 stopwords。

@@ -89,6 +89,37 @@ func TestCCR_MaxEntries(t *testing.T) {
 	}
 }
 
+func TestCCR_MaxEntriesEvictsOldestWhenStoringNewID(t *testing.T) {
+	c := NewCCR(CCRConfig{TTL: time.Hour, MaxEntries: 1})
+	idA := c.Store("A", "a", KindText)
+	idB := c.Store("B", "b", KindText)
+	if idA == idB {
+		t.Fatal("different content should have different ids")
+	}
+	if _, ok := c.Retrieve(idA); ok {
+		t.Fatalf("oldest id %q should have been evicted", idA)
+	}
+	if got, ok := c.Retrieve(idB); !ok || got != "B" {
+		t.Fatalf("new id %q should remain, got=%q ok=%v", idB, got, ok)
+	}
+}
+
+func TestCCR_MaxEntriesRepeatStoreDoesNotEvictSameID(t *testing.T) {
+	c := NewCCR(CCRConfig{TTL: time.Hour, MaxEntries: 1})
+	id1 := c.Store("A", "a", KindText)
+	id2 := c.Store("A", "a2", KindText)
+	if id1 != id2 {
+		t.Fatalf("repeat store should return same id: %q vs %q", id1, id2)
+	}
+	if got, ok := c.Retrieve(id1); !ok || got != "A" {
+		t.Fatalf("repeat-stored id should remain, got=%q ok=%v", got, ok)
+	}
+	count, _ := c.Stats()
+	if count != 1 {
+		t.Fatalf("repeat store should keep one entry, got %d", count)
+	}
+}
+
 // 后台 GC：过期条目被 Ticker 清理
 func TestCCR_BackgroundGC(t *testing.T) {
 	c := NewCCR(CCRConfig{TTL: 50 * time.Millisecond, MaxEntries: 1000})
