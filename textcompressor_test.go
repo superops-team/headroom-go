@@ -104,3 +104,31 @@ func TestTextCompressor_OrderPreserved(t *testing.T) {
 		t.Errorf("order reversed: %s", out)
 	}
 }
+
+func TestTextCompressor_FlushSingleLineWithoutTrailingNewline(t *testing.T) {
+	out := CompressText("single important line", TextConfig{Aggressiveness: 0.1})
+	if out != "single important line" {
+		t.Fatalf("got %q", out)
+	}
+}
+
+func TestTextCompressor_FlushTrailingDuplicateGroup(t *testing.T) {
+	out := CompressText("repeat\nrepeat\nrepeat", TextConfig{Aggressiveness: 0.1})
+	if out != "repeat [x3]" {
+		t.Fatalf("got %q", out)
+	}
+}
+
+func TestTextCompressor_FlushDuplicateGroupsSeparatedByBlank(t *testing.T) {
+	out := CompressText("a\na\n\nb\nb", TextConfig{Aggressiveness: 0.1})
+	if out != "a [x2]\nb [x2]" {
+		t.Fatalf("got %q", out)
+	}
+}
+
+func TestTextCompressor_PreserveErrorBeforeBlankLine(t *testing.T) {
+	out := CompressText("[ERROR] the service is down\n\nnormal line", TextConfig{Aggressiveness: 0.5})
+	if !strings.Contains(out, "[ERROR] the service is down") {
+		t.Fatalf("ERROR line before blank should be preserved, got %q", out)
+	}
+}

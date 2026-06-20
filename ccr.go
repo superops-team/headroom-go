@@ -51,13 +51,13 @@ func (c *CCR) backgroundGC() {
 	}
 }
 
-// Store 保存原始内容与压缩内容，返回可检索 id（格式 v2_SHA256前12字符）。
+// Store 保存原始内容与压缩内容，返回可检索 id（legacy 格式 v2_SHA256前12字符）。
 // 相同内容重复 Store 返回相同 id，且更新 StoredAt 时间。
 func (c *CCR) Store(original, compressed string, kind ContentKind) string {
 	// 惰性 GC：Store 前先清理过期条目
 	c.collectExpired()
 
-	id := "v2_" + sha256Prefix12(original)
+	id := LegacyCCRIDVersion + "_" + sha256Prefix12(original)
 
 	c.mu.Lock()
 	defer c.mu.Unlock()

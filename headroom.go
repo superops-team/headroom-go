@@ -41,7 +41,12 @@ type Options struct {
 	AlignPrefix bool
 	// TokenLimit 可选：估算 token 数低于该阈值时跳过压缩。0 表示不限制。
 	// 默认 0。
-	TokenLimit int
+	TokenLimit      int
+	TokenizerConfig TokenizerConfig
+	TokenBudget     int
+	Query           string
+	EnablePipeline  bool
+	Observer        Observer
 }
 
 // Result 是 Compress 的输出。
@@ -50,6 +55,8 @@ type Result struct {
 	CompressedTokens int
 	OriginalTokens   int
 	Savings          float64
+	Warnings         []Warning
+	Steps            []CompressionStep
 }
 
 // DefaultOptions 返回推荐的默认选项。
@@ -64,25 +71,40 @@ func DefaultOptions() Options {
 
 // Compress 压缩一组聊天消息。assistant 角色消息原样透传。
 func Compress(messages []Message, opts Options) (*Result, error) {
+	engine, warnings := NewCompressionEngine(opts)
+	result, err := engine.Compress(messages, opts)
+	if result != nil && len(warnings) > 0 {
+		result.Warnings = append(warnings, result.Warnings...)
+	}
+	return result, err
+}
+
+func compressLegacy(messages []Message, opts Options, tokenizer Tokenizer, initialWarnings []Warning, observer Observer) (*Result, error) {
 	router := NewContentRouter()
 	ccr := getPackageCCR()
 	aligner := NewCacheAligner(CacheAlignerConfig{
 		Enabled: opts.AlignPrefix,
-		Version: "v0.3",
+		Version: PrefixVersion,
 	})
 
 	compressedMsgs := make([]Message, 0, len(messages))
 	origTokens := 0
 	compTokens := 0
+	warnings := append([]Warning{}, initialWarnings...)
+	steps := make([]CompressionStep, 0, len(messages))
 
 	for _, m := range messages {
-		msgTokens := estimateTokens(m.Content)
+		msgTokens, err := countTokens(tokenizer, m.Content)
+		if err != nil {
+			return nil, err
+		}
 		origTokens += msgTokens
 
 		// assistant 角色：原样透传
 		if m.Role == "assistant" {
 			compressedMsgs = append(compressedMsgs, m)
 			compTokens += msgTokens
+			steps = append(steps, CompressionStep{Name: "skip_assistant", Kind: KindText.String(), TokensBefore: msgTokens, TokensAfter: msgTokens, Skipped: true, Reason: "assistant role"})
 			continue
 		}
 
@@ -90,6 +112,7 @@ func Compress(messages []Message, opts Options) (*Result, error) {
 		if strings.TrimSpace(m.Content) == "" {
 			compressedMsgs = append(compressedMsgs, m)
 			compTokens += msgTokens
+			steps = append(steps, CompressionStep{Name: "skip_empty", Kind: KindText.String(), TokensBefore: msgTokens, TokensAfter: msgTokens, Skipped: true, Reason: "empty content"})
 			continue
 		}
 
@@ -97,23 +120,15 @@ func Compress(messages []Message, opts Options) (*Result, error) {
 		if opts.TokenLimit > 0 && msgTokens < opts.TokenLimit {
 			compressedMsgs = append(compressedMsgs, m)
 			compTokens += msgTokens
+			steps = append(steps, CompressionStep{Name: "skip_token_limit", Kind: KindText.String(), TokensBefore: msgTokens, TokensAfter: msgTokens, Skipped: true, Reason: "below token limit"})
 			continue
 		}
 
 		// 检测内容类型并路由到对应压缩器
 		kind := router.Detect(m.Content)
-		var out string
-		switch kind {
-		case KindJSON:
-			o, err := SmartCrushJSON(m.Content, SmartCrushConfig{Aggressiveness: opts.Aggressiveness})
-			if err != nil {
-				return nil, fmt.Errorf("smartcrush: %w", err)
-			}
-			out = o
-		case KindCode:
-			out = CompressCode(m.Content, CodeConfig{Aggressiveness: opts.Aggressiveness})
-		default:
-			out = CompressText(m.Content, TextConfig{Aggressiveness: opts.Aggressiveness})
+		out, err := DefaultCompressorRegistry().Compress(kind, m.Content, opts)
+		if err != nil {
+			return nil, fmt.Errorf("compress %s: %w", kind.String(), err)
 		}
 
 		// 对齐前缀（如果启用）
@@ -135,6 +150,13 @@ func Compress(messages []Message, opts Options) (*Result, error) {
 		if outLen >= origLen {
 			out = m.Content
 			outLen = origLen
+			steps = append(steps, CompressionStep{Name: "legacy_compress", Kind: kind.String(), TokensBefore: msgTokens, TokensAfter: msgTokens, Skipped: true, Reason: "output not shorter"})
+		} else {
+			outTokens, err := countTokens(tokenizer, out)
+			if err != nil {
+				return nil, err
+			}
+			steps = append(steps, CompressionStep{Name: "legacy_compress", Kind: kind.String(), TokensBefore: msgTokens, TokensAfter: outTokens})
 		}
 
 		compressedMsgs = append(compressedMsgs, Message{
@@ -142,7 +164,11 @@ func Compress(messages []Message, opts Options) (*Result, error) {
 			Content: out,
 			Name:    m.Name,
 		})
-		compTokens += outLen / 4
+		outTokens, err := countTokens(tokenizer, out)
+		if err != nil {
+			return nil, err
+		}
+		compTokens += outTokens
 	}
 
 	savings := 0.0
@@ -150,11 +176,19 @@ func Compress(messages []Message, opts Options) (*Result, error) {
 		savings = float64(origTokens-compTokens) / float64(origTokens)
 	}
 
+	if observer != nil {
+		for _, step := range steps {
+			observer.ObserveCompressionStep(step)
+		}
+	}
+
 	return &Result{
 		Messages:         compressedMsgs,
 		CompressedTokens: compTokens,
 		OriginalTokens:   origTokens,
 		Savings:          savings,
+		Warnings:         warnings,
+		Steps:            steps,
 	}, nil
 }
 
@@ -172,8 +206,13 @@ func CompressString(content string, opts Options) (string, error) {
 
 // estimateTokens 估算 token 数（按 ~4 chars/token 的粗略估算）。
 func estimateTokens(s string) int {
-	if len(s) == 0 {
-		return 0
+	n, _ := FallbackTokenizer{}.Count(s)
+	return n
+}
+
+func countTokens(tokenizer Tokenizer, content string) (int, error) {
+	if tokenizer == nil {
+		tokenizer = FallbackTokenizer{}
 	}
-	return len(s) / 4
+	return tokenizer.Count(content)
 }

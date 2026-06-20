@@ -18,6 +18,14 @@ func TestContentRouter_JSONObject(t *testing.T) {
 	}
 }
 
+func TestContentRouter_JSONContainingHTMLString(t *testing.T) {
+	r := NewContentRouter()
+	got := r.Detect(`{"html":"<html><head></head><body>hello</body></html>"}`)
+	if got != KindJSON {
+		t.Errorf("JSON containing HTML string: got %s, want JSON", got)
+	}
+}
+
 func TestContentRouter_PythonCode(t *testing.T) {
 	r := NewContentRouter()
 	src := "def foo():\n    import json\n    data = {}\n    return data\n"
@@ -69,5 +77,24 @@ func TestContentRouter_InvalidJSON(t *testing.T) {
 	got := r.Detect(`{"a": 1, "b": 2,}`)
 	if got == KindJSON {
 		t.Errorf("invalid JSON should NOT be KindJSON, got KindJSON")
+	}
+}
+
+func TestContentRouter_ExtendedKinds(t *testing.T) {
+	r := NewContentRouter()
+	cases := []struct {
+		name, in string
+		want     ContentKind
+	}{
+		{"diff", "diff --git a/a.go b/a.go\n--- a/a.go\n+++ b/a.go\n@@ -1 +1 @@\n-old\n+new", KindDiff},
+		{"search", "a.go:10:func main\na.go-11-return nil", KindSearch},
+		{"log", "[ERROR] failed\n[WARN] retry", KindLog},
+		{"html", "<!doctype html><html><head></head><body>hello</body></html>", KindHTML},
+		{"csv", "a,b,c\n1,2,3", KindTabular},
+	}
+	for _, tc := range cases {
+		if got := r.Detect(tc.in); got != tc.want {
+			t.Fatalf("%s got %s want %s", tc.name, got, tc.want)
+		}
 	}
 }

@@ -1,0 +1,2 @@
+a.go:10:func main()
+a.go-11-return nil

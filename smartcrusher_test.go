@@ -2,6 +2,7 @@ package headroom
 
 import (
 	"encoding/json"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -43,8 +44,8 @@ func TestSmartCrusher_Conservative_RemoveZeros(t *testing.T) {
 	}
 }
 
-// 标准模式：数组折叠（>5 元素折叠为 [...N items...]）
-func TestSmartCrusher_Standard_ArrayCollapse(t *testing.T) {
+// 标准模式：低信号短数组不应粗暴折叠为字符串
+func TestSmartCrusher_Standard_ArrayLowSignalPassthrough(t *testing.T) {
 	cfg := SmartCrushConfig{Aggressiveness: 0.5}
 	out, err := SmartCrushJSON(`{"items":[1,2,3,4,5,6,7,8,9,10]}`, cfg)
 	if err != nil {
@@ -57,12 +58,9 @@ func TestSmartCrusher_Standard_ArrayCollapse(t *testing.T) {
 	if err := json.Unmarshal([]byte(out), &result); err != nil {
 		t.Fatal(err)
 	}
-	items, _ := result["items"]
-	if !strings.Contains(items.(string), "...") {
-		t.Errorf("items should be collapsed to a string containing '...', got %v", items)
-	}
-	if !strings.Contains(items.(string), "10") {
-		t.Errorf("items collapsed string should contain count '10', got %v", items)
+	items, ok := result["items"].([]interface{})
+	if !ok || len(items) != 10 {
+		t.Errorf("low-signal array should pass through as array, got %T %v", result["items"], result["items"])
 	}
 }
 
@@ -146,5 +144,111 @@ func TestSmartCrusher_OutputAlwaysValidJSON(t *testing.T) {
 				t.Errorf("agg=%.1f invalid JSON output: %s\ninput: %s", agg, out, in)
 			}
 		}
+	}
+}
+
+func TestSmartCrusher_ArrayAnalysisPlanExecute(t *testing.T) {
+	var sb strings.Builder
+	sb.WriteString(`{"items":[`)
+	for i := 0; i < 200; i++ {
+		if i > 0 {
+			sb.WriteByte(',')
+		}
+		status := "ok"
+		message := "noise"
+		extra := `,"empty":""`
+		if i == 13 {
+			status = "ERROR"
+			message = "critical failure"
+		}
+		if i == 31 {
+			extra = `,"empty":"","extra":"outlier"`
+		}
+		sb.WriteString(`{"id":"item-` + strconv.Itoa(i) + `","status":"` + status + `","message":"` + message + `"` + extra + `}`)
+	}
+	sb.WriteString(`]}`)
+	input := sb.String()
+	out, steps, err := SmartCrushJSONWithSteps(input, SmartCrushConfig{Aggressiveness: 0.6})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !json.Valid([]byte(out)) {
+		t.Fatalf("output must be valid JSON: %s", out)
+	}
+	if !strings.Contains(out, "_headroom_array") || !strings.Contains(out, "critical failure") || !strings.Contains(out, "outliers") {
+		t.Fatalf("expected summarized array with critical/outlier retention, got %s", out)
+	}
+	if len(steps) == 0 || steps[len(steps)-1].Skipped {
+		t.Fatalf("expected executed smartcrusher step, got %#v", steps)
+	}
+	for _, step := range steps {
+		if step.Name == "smartcrusher_array" && (step.TokensBefore != 0 || step.TokensAfter != 0) {
+			t.Fatalf("smartcrusher array step should not report byte/item counts as tokens: %#v", step)
+		}
+	}
+}
+
+func TestSmartCrusher_PrimitiveArrayKeepsCriticalMiddleValue(t *testing.T) {
+	items := make([]string, 0, 60)
+	for i := 0; i < 60; i++ {
+		value := "normal-event-payload-with-low-signal"
+		if i == 30 {
+			value = "ERROR critical middle event"
+		}
+		items = append(items, strconv.Quote(value))
+	}
+	input := `{"items":[` + strings.Join(items, ",") + `]}`
+	out, _, err := SmartCrushJSONWithSteps(input, SmartCrushConfig{Aggressiveness: 0.6})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "ERROR critical middle event") || !strings.Contains(out, `"critical"`) {
+		t.Fatalf("expected primitive critical value to be retained, got %s", out)
+	}
+}
+
+func TestSmartCrusher_FieldProjectionPrioritizesCriticalFields(t *testing.T) {
+	stats := map[string]FieldStat{
+		"alpha":     {Count: 10, NonZero: 10},
+		"bravo":     {Count: 10, NonZero: 10},
+		"charlie":   {Count: 10, NonZero: 10},
+		"delta":     {Count: 10, NonZero: 10},
+		"echo":      {Count: 10, NonZero: 10},
+		"foxtrot":   {Count: 10, NonZero: 10},
+		"golf":      {Count: 10, NonZero: 10},
+		"hotel":     {Count: 10, NonZero: 10},
+		"status":    {Count: 10, NonZero: 10, Critical: true},
+		"message":   {Count: 10, NonZero: 10, Critical: true},
+		"timestamp": {Count: 10, NonZero: 10},
+	}
+	fields := chooseKeepFields(stats)
+	joined := "," + strings.Join(fields, ",") + ","
+	for _, field := range []string{"status", "message", "timestamp"} {
+		if !strings.Contains(joined, ","+field+",") {
+			t.Fatalf("critical field %q not retained in %v", field, fields)
+		}
+	}
+	if len(fields) != 8 {
+		t.Fatalf("expected field cap of 8, got %d: %v", len(fields), fields)
+	}
+}
+
+func TestSmartCrusher_InsufficientSavingsFallback(t *testing.T) {
+	input := `{"items":[{"id":"a"},{"id":"b"},{"id":"c"},{"id":"d"},{"id":"e"},{"id":"f"}]}`
+	out, steps, err := SmartCrushJSONWithSteps(input, SmartCrushConfig{Aggressiveness: 0.5})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out != `{"items":[{"id":"a"},{"id":"b"},{"id":"c"},{"id":"d"},{"id":"e"},{"id":"f"}]}` {
+		t.Fatalf("expected insufficient-savings passthrough, got %s", out)
+	}
+	found := false
+	for _, step := range steps {
+		if step.Skipped && strings.Contains(step.Reason, "insufficient savings") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("expected insufficient savings step, got %#v", steps)
 	}
 }

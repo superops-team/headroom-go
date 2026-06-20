@@ -28,7 +28,7 @@ func newRequestID() string {
 		// fallback：用纳秒时间戳的低 8 字节
 		ts := time.Now().UnixNano()
 		for i := 0; i < 8; i++ {
-			b[i] = byte(ts >> (i * 8))
+			b[i] = byte(ts >> uint(i*8))
 		}
 	}
 	return hex.EncodeToString(b)
@@ -51,11 +51,11 @@ func defaultHTTPClient() *http.Client {
 
 // Config 配置 headroom HTTP 代理。
 type Config struct {
-	UpstreamBaseURL string          // 上游 API Base URL（例如 https://api.openai.com/v1）
-	APIKey          string          // 上游 API key（通过 Authorization 头转发）
-	ListenAddr      string          // 监听地址（默认 ":8787"）
+	UpstreamBaseURL string           // 上游 API Base URL（例如 https://api.openai.com/v1）
+	APIKey          string           // 上游 API key（通过 Authorization 头转发）
+	ListenAddr      string           // 监听地址（默认 ":8787"）
 	CompressOptions headroom.Options // 压缩选项
-	HTTPClient      *http.Client    // 上游 HTTP Client（nil 则使用默认超时配置）
+	HTTPClient      *http.Client     // 上游 HTTP Client（nil 则使用默认超时配置）
 }
 
 // NewProxy 创建一个 headroom HTTP Proxy。
@@ -77,7 +77,7 @@ func NewProxy(cfg Config) http.Handler {
 
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprintf(w, `{"status":"ok","version":"v0.3.0","uptime":"%s"}`, time.Since(startTime).String())
+		fmt.Fprintf(w, `{"status":"ok","version":"%s","uptime":"%s"}`, headroom.Version, time.Since(startTime).String())
 	})
 
 	mux.HandleFunc("/v1/chat/completions", func(w http.ResponseWriter, r *http.Request) {
@@ -135,7 +135,7 @@ func NewProxy(cfg Config) http.Handler {
 		if isStream {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusBadRequest)
-			io.WriteString(w, `{"error":"streaming not supported in v0.3"}`)
+			io.WriteString(w, `{"error":"streaming not supported in `+headroom.Version+`"}`)
 			return
 		}
 

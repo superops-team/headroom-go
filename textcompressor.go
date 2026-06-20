@@ -60,7 +60,7 @@ func CompressText(content string, cfg TextConfig) string {
 
 		// 空行：flush 之前的计数，不保留空行
 		if trimmed == "" {
-			flushDup(removeStopwordsIfNeeded(origLine, cfg, false))
+			flushDup(removeStopwordsIfNeeded(origLine, cfg, isHighPriority(origLine)))
 			origLine = ""
 			dupCount = 0
 			continue

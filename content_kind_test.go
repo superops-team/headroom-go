@@ -21,4 +21,13 @@ func TestContentKindValues(t *testing.T) {
 	if KindCode.String() != "Code" {
 		t.Errorf("KindCode.String() got %s", KindCode.String())
 	}
+	cases := map[ContentKind]string{KindDiff: "Diff", KindLog: "Log", KindSearch: "Search", KindTabular: "Tabular", KindSpreadsheet: "Spreadsheet", KindHTML: "HTML", KindUnknown: "Unknown"}
+	for kind, want := range cases {
+		if kind.String() != want {
+			t.Errorf("%v.String() got %s want %s", int(kind), kind.String(), want)
+		}
+	}
+	if ContentKind(999).String() != "Text" {
+		t.Errorf("unknown numeric kind should keep legacy Text fallback, got %s", ContentKind(999).String())
+	}
 }

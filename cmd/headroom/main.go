@@ -35,7 +35,7 @@ func main() {
 	case "proxy":
 		runProxy(fs)
 	case "version":
-		fmt.Println("headroom-go v0.3.0")
+		fmt.Println("headroom-go " + headroom.Version)
 	default:
 		logger.Error("unknown command", "cmd", subcmd)
 		printUsage()
@@ -47,15 +47,28 @@ func runCompress(fs *flag.FlagSet) {
 	aggressive := fs.Float64("aggressiveness", 0.5, "压缩强度 0.0-1.0（0.5 默认）")
 	noRev := fs.Bool("no-reversible", false, "关闭可逆压缩（不附加 retrieve id）")
 	noAlign := fs.Bool("no-align", false, "关闭前缀对齐")
+	tokenizerBackend := fs.String("tokenizer-backend", "", "tokenizer backend: fallback/tiktoken/huggingface")
+	tokenBudget := fs.Int("token-budget", 0, "目标 token budget（0 表示不限制）")
+	enablePipeline := fs.Bool("enable-pipeline", false, "启用 Spec A pipeline 压缩路径")
+	query := fs.String("query", "", "用于 diff/search scoring 的查询词")
 	input := fs.String("input", "", "输入文件（默认 stdin）")
 	output := fs.String("output", "", "输出文件（默认 stdout）")
 	stats := fs.Bool("stats", false, "打印 token 统计到 stderr")
 	fs.Parse(os.Args[2:])
+	if err := validateTokenizerBackend(*tokenizerBackend); err != nil {
+		logger.Error("invalid tokenizer backend", "err", err)
+		os.Exit(1)
+	}
 
 	opts := headroom.DefaultOptions()
 	opts.Aggressiveness = *aggressive
 	opts.Reversible = !*noRev
 	opts.AlignPrefix = *noAlign == false
+	opts.TokenizerConfig.Backend = headroom.TokenizerBackend(*tokenizerBackend)
+	opts.TokenizerConfig.AllowFallback = true
+	opts.TokenBudget = *tokenBudget
+	opts.EnablePipeline = *enablePipeline
+	opts.Query = *query
 
 	var reader io.Reader = os.Stdin
 	if *input != "" {
@@ -95,8 +108,13 @@ func runCompress(fs *flag.FlagSet) {
 	io.WriteString(writer, out)
 
 	if *stats {
-		orig := len(data) / 4
-		comp := len(out) / 4
+		tok, _, err := headroom.NewTokenizer(opts.TokenizerConfig)
+		if err != nil {
+			logger.Error("tokenizer failed", "err", err)
+			os.Exit(1)
+		}
+		orig, _ := tok.Count(string(data))
+		comp, _ := tok.Count(out)
 		savings := 0.0
 		if orig > 0 {
 			savings = float64(orig-comp) / float64(orig) * 100
@@ -105,17 +123,30 @@ func runCompress(fs *flag.FlagSet) {
 	}
 }
 
+func validateTokenizerBackend(backend string) error {
+	switch headroom.TokenizerBackend(backend) {
+	case "", headroom.TokenizerFallback, headroom.TokenizerTiktoken, headroom.TokenizerHF:
+		return nil
+	default:
+		return fmt.Errorf("%q (valid: fallback, tiktoken, huggingface)", backend)
+	}
+}
+
 func runProxy(fs *flag.FlagSet) {
 	port := fs.Int("port", 8787, "监听端口")
 	upstream := fs.String("upstream", "https://api.openai.com/v1", "上游 Base URL")
 	aggressive := fs.Float64("aggressiveness", 0.5, "压缩强度 0.0-1.0")
 	noRev := fs.Bool("no-reversible", false, "关闭可逆压缩")
+	enablePipeline := fs.Bool("enable-pipeline", false, "启用 Spec A pipeline 压缩路径")
+	tokenBudget := fs.Int("token-budget", 0, "目标 token budget（0 表示不限制）")
 	apiKey := os.Getenv("HEADROOM_API_KEY")
 	fs.Parse(os.Args[2:])
 
 	opts := headroom.DefaultOptions()
 	opts.Aggressiveness = *aggressive
 	opts.Reversible = !*noRev
+	opts.EnablePipeline = *enablePipeline
+	opts.TokenBudget = *tokenBudget
 
 	cfg := proxy.Config{
 		UpstreamBaseURL: *upstream,
@@ -152,9 +183,7 @@ func runProxy(fs *flag.FlagSet) {
 }
 
 func printUsage() {
-	fmt.Fprint(os.Stderr, `headroom-go v0.3.0 — AI 上下文压缩层
-
-Usage:
+	fmt.Fprintf(os.Stderr, "headroom-go %s — AI 上下文压缩层\n\n%s", headroom.Version, `Usage:
   headroom <command> [flags]
 
 Commands:

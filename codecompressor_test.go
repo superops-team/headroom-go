@@ -30,6 +30,28 @@ func TestCodeCompressor_BlockCommentRemoval(t *testing.T) {
 	}
 }
 
+func TestCodeCompressor_BlockCommentInsideStringPreserved(t *testing.T) {
+	cfg := CodeConfig{Aggressiveness: 0.5}
+	src := `package main
+func main() {
+    println("a/*not comment*/b")
+    raw := ` + "`" + `keep /* raw */ text` + "`" + `
+}`
+	out := CompressCode(src, cfg)
+	if !strings.Contains(out, `"a/*not comment*/b"`) || !strings.Contains(out, "keep /* raw */ text") {
+		t.Errorf("block comment markers inside strings should be preserved, got: %s", out)
+	}
+}
+
+func TestCodeCompressor_UnclosedBlockCommentPreservesTail(t *testing.T) {
+	cfg := CodeConfig{Aggressiveness: 0.5}
+	src := "package main\nfunc main() {\n    println(\"before\")\n    /* truncated comment\n    println(\"after\")\n}\n"
+	out := CompressCode(src, cfg)
+	if !strings.Contains(out, "truncated comment") || !strings.Contains(out, `println("after")`) {
+		t.Fatalf("unclosed block comment should preserve tail, got: %s", out)
+	}
+}
+
 func TestCodeCompressor_HashCommentRemoval(t *testing.T) {
 	cfg := CodeConfig{Aggressiveness: 0.5}
 	src := "#!/usr/bin/env python\n# this is python comment\ndef foo():\n    return 1\n"

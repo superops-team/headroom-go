@@ -1,7 +1,6 @@
 package headroom
 
 import (
-	"regexp"
 	"strconv"
 	"strings"
 )
@@ -10,13 +9,11 @@ type CodeConfig struct {
 	Aggressiveness float64
 }
 
-var blockCommentRE = regexp.MustCompile(`(?s)/\*.*?\*/`)
-
 // CompressCode 压缩代码文本。
 // 策略：移除注释/空行 → 折叠过长函数体 → 保留语义锚点。
 func CompressCode(content string, cfg CodeConfig) string {
 	// Step 1: 移除块注释
-	content = blockCommentRE.ReplaceAllString(content, "")
+	content = removeBlockComments(content)
 
 	// Step 2: 逐行处理（移除单行注释/空行/收缩空白）
 	lines := strings.Split(content, "\n")
@@ -47,6 +44,63 @@ func CompressCode(content string, cfg CodeConfig) string {
 	}
 
 	return strings.Join(filtered, "\n")
+}
+
+func removeBlockComments(content string) string {
+	var b strings.Builder
+	b.Grow(len(content))
+	inSingle := false
+	inDouble := false
+	inRaw := false
+	for i := 0; i < len(content); i++ {
+		ch := content[i]
+		if ch == '\\' && (inSingle || inDouble) && i+1 < len(content) {
+			b.WriteByte(ch)
+			i++
+			b.WriteByte(content[i])
+			continue
+		}
+		if !inSingle && !inDouble && ch == '`' {
+			inRaw = !inRaw
+			b.WriteByte(ch)
+			continue
+		}
+		if !inRaw {
+			switch ch {
+			case '"':
+				if !inSingle {
+					inDouble = !inDouble
+				}
+			case '\'':
+				if !inDouble {
+					inSingle = !inSingle
+				}
+			case '/':
+				if !inSingle && !inDouble && i+1 < len(content) && content[i+1] == '*' {
+					j := i + 2
+					closed := false
+					for j < len(content) {
+						if content[j] == '*' && j+1 < len(content) && content[j+1] == '/' {
+							closed = true
+							break
+						}
+						j++
+					}
+					if closed {
+						for k := i + 2; k < j; k++ {
+							if content[k] == '\n' || content[k] == '\r' {
+								b.WriteByte(content[k])
+							}
+						}
+						i = j + 1
+						continue
+					}
+				}
+			}
+		}
+		b.WriteByte(ch)
+	}
+	return b.String()
 }
 
 // indexLineComment 返回行中真正"行尾注释"开始的位置，-1 表示不存在。
@@ -223,5 +277,3 @@ func lineIndent(s string) int {
 	}
 	return n
 }
-
-
