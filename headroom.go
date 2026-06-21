@@ -27,34 +27,16 @@ type Result = types.Result
 // CompressionEngine compresses message batches with resolved dependencies.
 type CompressionEngine = eng.CompressionEngine
 type CompressionContext = types.CompressionContext
-type CompressionPolicy = types.CompressionPolicy
-type PolicyDecision = types.PolicyDecision
-type PolicyMode = types.PolicyMode
-type TransformKind = types.TransformKind
-type TransformErrorKind = types.TransformErrorKind
 type TransformError = types.TransformError
-type ReformatOutput = types.ReformatOutput
-type OffloadOutput = types.OffloadOutput
 type ReformatTransform = types.ReformatTransform
-type OffloadTransform = types.OffloadTransform
-type PipelineResult = types.PipelineResult
 
 type Pipeline struct {
 	reformats []ReformatTransform
-	offloads  []OffloadTransform
+	offloads  []types.OffloadTransform
 }
 
 const (
-	PolicyConservative = types.PolicyConservative
-	PolicyStandard     = types.PolicyStandard
-	PolicyAggressive   = types.PolicyAggressive
-
-	TransformReformat = types.TransformReformat
-	TransformOffload  = types.TransformOffload
-
-	TransformErrorInvalidInput = types.TransformErrorInvalidInput
-	TransformErrorSkipped      = types.TransformErrorSkipped
-	TransformErrorInternal     = types.TransformErrorInternal
+	TransformErrorInternal = types.TransformErrorInternal
 )
 
 func DefaultOptions() Options {
@@ -70,16 +52,16 @@ func NewCompressionEngine(opts Options) (*CompressionEngine, []Warning) {
 	return eng.NewCompressionEngine(opts)
 }
 
-func DefaultCompressionPolicy(aggressiveness float64) CompressionPolicy {
+func DefaultCompressionPolicy(aggressiveness float64) types.CompressionPolicy {
 	return types.DefaultCompressionPolicy(aggressiveness)
 }
 
-func NewTransformError(kind TransformErrorKind, transform, message string, cause error) TransformError {
+func NewTransformError(kind types.TransformErrorKind, transform, message string, cause error) TransformError {
 	return types.NewTransformError(kind, transform, message, cause)
 }
 
 func NewDefaultPipeline() *Pipeline {
-	return &Pipeline{reformats: []ReformatTransform{legacyTextTransform{}, legacyCodeTransform{}, jsonMinifierTransform{}, compressors.NewLogTemplateTransform(), compressors.NewHTMLCleanTransform()}, offloads: []OffloadTransform{compressors.NewDiffOffloadTransform(), compressors.NewLogOffloadTransform(), compressors.NewSearchOffloadTransform(), jsonOffloadTransform{}}}
+	return &Pipeline{reformats: []ReformatTransform{legacyTextTransform{}, legacyCodeTransform{}, jsonMinifierTransform{}, compressors.NewLogTemplateTransform(), compressors.NewHTMLCleanTransform()}, offloads: []types.OffloadTransform{compressors.NewDiffOffloadTransform(), compressors.NewLogOffloadTransform(), compressors.NewSearchOffloadTransform(), jsonOffloadTransform{}}}
 }
 
 // Compress compresses a batch of chat messages.
@@ -245,10 +227,10 @@ func buildLegacyResult(messages []Message, origTokens, compTokens int, warnings 
 	return &Result{Messages: messages, CompressedTokens: compTokens, OriginalTokens: origTokens, Savings: savings, Warnings: warnings, Steps: steps}
 }
 
-func (p *Pipeline) Run(content string, ctx CompressionContext, policy CompressionPolicy) PipelineResult {
+func (p *Pipeline) Run(content string, ctx CompressionContext, policy types.CompressionPolicy) types.PipelineResult {
 	before, beforeWarning := countTokensForPipeline(ctx.Tokenizer, content, "before")
 	current := content
-	result := PipelineResult{Output: content, TokensBefore: before, TokensAfter: before}
+	result := types.PipelineResult{Output: content, TokensBefore: before, TokensAfter: before}
 	if beforeWarning != nil {
 		result.Warnings = append(result.Warnings, *beforeWarning)
 	}
@@ -274,7 +256,7 @@ func (p *Pipeline) Run(content string, ctx CompressionContext, policy Compressio
 		result.Warnings = append(result.Warnings, out.Warnings...)
 		result.Steps = append(result.Steps, out.Steps...)
 	}
-	if containsTransformKind(decision.AllowedKinds, TransformOffload) {
+	if containsTransformKind(decision.AllowedKinds, types.TransformOffload) {
 		for _, t := range p.offloads {
 			if !appliesTo(t.AppliesTo(), ctx.ContentKind) || t.Confidence() < 0.5 || t.EstimateBloat(current, ctx) < policy.BloatThreshold {
 				continue
@@ -338,7 +320,7 @@ func appliesTo(kinds []ContentKind, want ContentKind) bool {
 	return false
 }
 
-func containsTransformKind(kinds []TransformKind, want TransformKind) bool {
+func containsTransformKind(kinds []types.TransformKind, want types.TransformKind) bool {
 	return types.ContainsTransformKind(kinds, want)
 }
 
@@ -346,36 +328,36 @@ type legacyTextTransform struct{}
 
 func (legacyTextTransform) Name() string             { return "legacy_text" }
 func (legacyTextTransform) AppliesTo() []ContentKind { return []ContentKind{KindText} }
-func (legacyTextTransform) Apply(content string, ctx CompressionContext) (ReformatOutput, error) {
+func (legacyTextTransform) Apply(content string, ctx CompressionContext) (types.ReformatOutput, error) {
 	out := compressors.CompressText(content, compressors.TextConfig{Aggressiveness: ctx.Aggressiveness})
-	return ReformatOutput{Output: out, BytesSaved: len(content) - len(out), Steps: []CompressionStep{{Name: "legacy_text", Kind: ctx.ContentKind.String()}}}, nil
+	return types.ReformatOutput{Output: out, BytesSaved: len(content) - len(out), Steps: []CompressionStep{{Name: "legacy_text", Kind: ctx.ContentKind.String()}}}, nil
 }
 
 type legacyCodeTransform struct{}
 
 func (legacyCodeTransform) Name() string             { return "legacy_code" }
 func (legacyCodeTransform) AppliesTo() []ContentKind { return []ContentKind{KindCode} }
-func (legacyCodeTransform) Apply(content string, ctx CompressionContext) (ReformatOutput, error) {
+func (legacyCodeTransform) Apply(content string, ctx CompressionContext) (types.ReformatOutput, error) {
 	out := compressors.CompressCode(content, compressors.CodeConfig{Aggressiveness: ctx.Aggressiveness})
-	return ReformatOutput{Output: out, BytesSaved: len(content) - len(out), Steps: []CompressionStep{{Name: "legacy_code", Kind: ctx.ContentKind.String()}}}, nil
+	return types.ReformatOutput{Output: out, BytesSaved: len(content) - len(out), Steps: []CompressionStep{{Name: "legacy_code", Kind: ctx.ContentKind.String()}}}, nil
 }
 
 type jsonMinifierTransform struct{}
 
 func (jsonMinifierTransform) Name() string             { return "json_minifier" }
 func (jsonMinifierTransform) AppliesTo() []ContentKind { return []ContentKind{KindJSON} }
-func (jsonMinifierTransform) Apply(content string, ctx CompressionContext) (ReformatOutput, error) {
+func (jsonMinifierTransform) Apply(content string, ctx CompressionContext) (types.ReformatOutput, error) {
 	var buf bytes.Buffer
 	if err := json.Compact(&buf, []byte(content)); err != nil {
-		return ReformatOutput{}, NewTransformError(TransformErrorInvalidInput, "json_minifier", "invalid JSON", err)
+		return types.ReformatOutput{}, NewTransformError(types.TransformErrorInvalidInput, "json_minifier", "invalid JSON", err)
 	}
 	out := buf.String()
-	return ReformatOutput{Output: out, BytesSaved: len(content) - len(out), Steps: []CompressionStep{{Name: "json_minifier", Kind: ctx.ContentKind.String()}}}, nil
+	return types.ReformatOutput{Output: out, BytesSaved: len(content) - len(out), Steps: []CompressionStep{{Name: "json_minifier", Kind: ctx.ContentKind.String()}}}, nil
 }
 
 type jsonOffloadTransform struct{}
 
-func NewJSONOffloadTransform() OffloadTransform { return jsonOffloadTransform{} }
+func NewJSONOffloadTransform() types.OffloadTransform { return jsonOffloadTransform{} }
 
 func (jsonOffloadTransform) Name() string             { return "json_offload" }
 func (jsonOffloadTransform) AppliesTo() []ContentKind { return []ContentKind{KindJSON} }
@@ -386,17 +368,17 @@ func (jsonOffloadTransform) EstimateBloat(content string, ctx CompressionContext
 	return 0
 }
 func (jsonOffloadTransform) Confidence() float64 { return 0.7 }
-func (jsonOffloadTransform) Apply(content string, ctx CompressionContext) (OffloadOutput, error) {
+func (jsonOffloadTransform) Apply(content string, ctx CompressionContext) (types.OffloadOutput, error) {
 	crushed, steps, err := compressors.SmartCrushJSONWithSteps(content, compressors.SmartCrushConfig{Aggressiveness: ctx.Aggressiveness})
 	if err != nil {
-		return OffloadOutput{}, NewTransformError(TransformErrorInternal, "json_offload", "smart crusher failed", err)
+		return types.OffloadOutput{}, NewTransformError(TransformErrorInternal, "json_offload", "smart crusher failed", err)
 	}
 	id := ""
 	if ctx.CCR != nil {
 		id = ctx.CCR.Store(content, crushed, ctx.ContentKind)
 	}
 	steps = append([]CompressionStep{{Name: "json_offload", Kind: ctx.ContentKind.String()}}, steps...)
-	return OffloadOutput{Output: crushed, BytesSaved: len(content) - len(crushed), CacheKey: id, Steps: steps}, nil
+	return types.OffloadOutput{Output: crushed, BytesSaved: len(content) - len(crushed), CacheKey: id, Steps: steps}, nil
 }
 
 func warningFromTransformError(component string, err error) Warning {
@@ -410,7 +392,7 @@ type htmlCleanTransform struct{}
 
 func (htmlCleanTransform) Name() string             { return "html_clean" }
 func (htmlCleanTransform) AppliesTo() []ContentKind { return []ContentKind{KindHTML} }
-func (htmlCleanTransform) Apply(content string, ctx CompressionContext) (ReformatOutput, error) {
+func (htmlCleanTransform) Apply(content string, ctx CompressionContext) (types.ReformatOutput, error) {
 	return compressors.NewHTMLCleanTransform().Apply(content, ctx)
 }
 
@@ -436,30 +418,9 @@ type CompressionConfig = compressors.CompressionConfig
 type CodeConfig = compressors.CodeConfig
 type TextConfig = compressors.TextConfig
 type SmartCrushConfig = compressors.SmartCrushConfig
-type Crushability = compressors.Crushability
-type DetectedPattern = compressors.DetectedPattern
-type RecommendedStrategy = compressors.RecommendedStrategy
-type FieldStat = compressors.FieldStat
-type ArrayAnalysis = compressors.ArrayAnalysis
-type CompressionPlan = compressors.CompressionPlan
 type Compressor = compressors.Compressor
 type CompressorFunc = compressors.CompressorFunc
 type CompressorRegistry = compressors.CompressorRegistry
-
-const (
-	CrushabilityLow    = compressors.CrushabilityLow
-	CrushabilityMedium = compressors.CrushabilityMedium
-	CrushabilityHigh   = compressors.CrushabilityHigh
-
-	DetectedPatternLowSignal          = compressors.DetectedPatternLowSignal
-	DetectedPatternPrimitiveSequence  = compressors.DetectedPatternPrimitiveSequence
-	DetectedPatternHomogeneousObjects = compressors.DetectedPatternHomogeneousObjects
-	DetectedPatternMixedObjects       = compressors.DetectedPatternMixedObjects
-
-	RecommendedStrategyPassthrough         = compressors.RecommendedStrategyPassthrough
-	RecommendedStrategySummarizePrimitives = compressors.RecommendedStrategySummarizePrimitives
-	RecommendedStrategySummarizeObjects    = compressors.RecommendedStrategySummarizeObjects
-)
 
 func SmartCrushJSON(content string, cfg SmartCrushConfig) (string, error) {
 	return compressors.SmartCrushJSON(content, cfg)
@@ -467,14 +428,6 @@ func SmartCrushJSON(content string, cfg SmartCrushConfig) (string, error) {
 
 func SmartCrushJSONWithSteps(content string, cfg SmartCrushConfig) (string, []CompressionStep, error) {
 	return compressors.SmartCrushJSONWithSteps(content, cfg)
-}
-
-func AnalyzeArray(arr []interface{}) ArrayAnalysis {
-	return compressors.AnalyzeArray(arr)
-}
-
-func BuildCompressionPlan(analysis ArrayAnalysis, cfg SmartCrushConfig) CompressionPlan {
-	return compressors.BuildCompressionPlan(analysis, cfg)
 }
 
 func CompressCode(content string, cfg CodeConfig) string {
@@ -490,7 +443,7 @@ func lineIndent(s string) int {
 	for _, r := range s {
 		if r == ' ' {
 			n++
-		} else if r == '\t' {
+		} else if r == '	' {
 			n += 4
 		} else {
 			break

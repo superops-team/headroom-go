@@ -12,7 +12,7 @@ import (
 	"github.com/superops-team/headroom-go/internal/tokenizer"
 )
 
-const PrefixVersion = "v0.4"
+const PrefixVersion = "v0.5"
 
 type Pipeline struct {
 	reformats []ReformatTransform
