@@ -59,16 +59,6 @@ type Result struct {
 	Steps            []CompressionStep
 }
 
-type legacySkipDecision struct {
-	skipped bool
-	step    CompressionStep
-}
-
-type legacyPostProcessResult struct {
-	content string
-	step    CompressionStep
-}
-
 // DefaultOptions 返回推荐的默认选项。
 func DefaultOptions() Options {
 	return Options{
@@ -110,10 +100,10 @@ func compressLegacy(messages []Message, opts Options, tokenizer Tokenizer, initi
 		}
 		origTokens += msgTokens
 
-		if skip := legacySkipMessage(m, opts, msgTokens); skip.skipped {
+		if skipped, step := legacySkipMessage(m, opts, msgTokens); skipped {
 			compressedMsgs = append(compressedMsgs, m)
 			compTokens += msgTokens
-			steps = append(steps, skip.step)
+			steps = append(steps, step)
 			continue
 		}
 
@@ -122,12 +112,11 @@ func compressLegacy(messages []Message, opts Options, tokenizer Tokenizer, initi
 			return nil, err
 		}
 
-		post, err := postProcessLegacyCompression(m.Content, out, kind, opts, tokenizer, msgTokens, aligner, ccr)
+		out, step, err := postProcessLegacyCompression(m.Content, out, kind, opts, tokenizer, msgTokens, aligner, ccr)
 		if err != nil {
 			return nil, err
 		}
-		out = post.content
-		steps = append(steps, post.step)
+		steps = append(steps, step)
 
 		compressedMsgs = append(compressedMsgs, Message{
 			Role:    m.Role,
@@ -144,24 +133,24 @@ func compressLegacy(messages []Message, opts Options, tokenizer Tokenizer, initi
 	return buildLegacyResult(compressedMsgs, origTokens, compTokens, warnings, steps, observer), nil
 }
 
-func legacySkipMessage(m Message, opts Options, msgTokens int) legacySkipDecision {
+func legacySkipMessage(m Message, opts Options, msgTokens int) (bool, CompressionStep) {
 	baseStep := CompressionStep{Kind: KindText.String(), TokensBefore: msgTokens, TokensAfter: msgTokens, Skipped: true}
 	if m.Role == "assistant" {
 		baseStep.Name = "skip_assistant"
 		baseStep.Reason = "assistant role"
-		return legacySkipDecision{skipped: true, step: baseStep}
+		return true, baseStep
 	}
 	if strings.TrimSpace(m.Content) == "" {
 		baseStep.Name = "skip_empty"
 		baseStep.Reason = "empty content"
-		return legacySkipDecision{skipped: true, step: baseStep}
+		return true, baseStep
 	}
 	if opts.TokenLimit > 0 && msgTokens < opts.TokenLimit {
 		baseStep.Name = "skip_token_limit"
 		baseStep.Reason = "below token limit"
-		return legacySkipDecision{skipped: true, step: baseStep}
+		return true, baseStep
 	}
-	return legacySkipDecision{}
+	return false, CompressionStep{}
 }
 
 func routeAndCompressLegacy(router *ContentRouter, registry *CompressorRegistry, content string, opts Options) (ContentKind, string, error) {
@@ -173,36 +162,41 @@ func routeAndCompressLegacy(router *ContentRouter, registry *CompressorRegistry,
 	return kind, out, nil
 }
 
-func postProcessLegacyCompression(original, compressed string, kind ContentKind, opts Options, tokenizer Tokenizer, msgTokens int, aligner *CacheAligner, ccr *CCR) (legacyPostProcessResult, error) {
-	out := compressed
-	if opts.AlignPrefix {
-		out = aligner.Align(out)
-	}
-
-	origLen := len(original)
-	outLen := len(out)
-	if opts.Reversible {
-		id := ccr.Store(original, out, kind)
-		retrieveSuffix := "\n\n[headroom:retrieve id=" + id + "]"
-		outLen += len(retrieveSuffix)
-		out += retrieveSuffix
-	}
-
-	if outLen >= origLen {
-		return legacyPostProcessResult{
-			content: original,
-			step:    CompressionStep{Name: "legacy_compress", Kind: kind.String(), TokensBefore: msgTokens, TokensAfter: msgTokens, Skipped: true, Reason: "output not shorter"},
-		}, nil
+func postProcessLegacyCompression(original, compressed string, kind ContentKind, opts Options, tokenizer Tokenizer, msgTokens int, aligner *CacheAligner, ccr *CCR) (string, CompressionStep, error) {
+	out := applyAlignPrefix(compressed, opts, aligner)
+	out = applyReversibleCCR(original, out, kind, opts, ccr)
+	if fallbackContent, fallbackStep, fallback := applyFallbackIfLonger(original, out, kind, msgTokens); fallback {
+		return fallbackContent, fallbackStep, nil
 	}
 
 	outTokens, err := countTokens(tokenizer, out)
 	if err != nil {
-		return legacyPostProcessResult{}, err
+		return "", CompressionStep{}, err
 	}
-	return legacyPostProcessResult{
-		content: out,
-		step:    CompressionStep{Name: "legacy_compress", Kind: kind.String(), TokensBefore: msgTokens, TokensAfter: outTokens},
-	}, nil
+	return out, CompressionStep{Name: "legacy_compress", Kind: kind.String(), TokensBefore: msgTokens, TokensAfter: outTokens}, nil
+}
+
+func applyAlignPrefix(out string, opts Options, aligner *CacheAligner) string {
+	if opts.AlignPrefix {
+		out = aligner.Align(out)
+	}
+	return out
+}
+
+func applyReversibleCCR(original, out string, kind ContentKind, opts Options, ccr *CCR) string {
+	if opts.Reversible {
+		id := ccr.Store(original, out, kind)
+		retrieveSuffix := "\n\n[headroom:retrieve id=" + id + "]"
+		out += retrieveSuffix
+	}
+	return out
+}
+
+func applyFallbackIfLonger(original, out string, kind ContentKind, msgTokens int) (string, CompressionStep, bool) {
+	if len(out) >= len(original) {
+		return original, CompressionStep{Name: "legacy_compress", Kind: kind.String(), TokensBefore: msgTokens, TokensAfter: msgTokens, Skipped: true, Reason: "output not shorter"}, true
+	}
+	return out, CompressionStep{}, false
 }
 
 func buildLegacyResult(messages []Message, origTokens, compTokens int, warnings []Warning, steps []CompressionStep, observer Observer) *Result {

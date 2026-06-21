@@ -269,9 +269,9 @@ func TestSpecBE2ECompressLegacyHelperBehavior(t *testing.T) {
 			{msg: Message{Role: "user", Content: "short"}, tokens: 1, wantName: "skip_token_limit", wantReason: "below token limit"},
 		}
 		for _, tc := range cases {
-			got := legacySkipMessage(tc.msg, opts, tc.tokens)
-			if !got.skipped || got.step.Name != tc.wantName || got.step.Reason != tc.wantReason || !got.step.Skipped {
-				t.Fatalf("legacySkipMessage(%#v)=%#v", tc.msg, got)
+			skipped, step := legacySkipMessage(tc.msg, opts, tc.tokens)
+			if !skipped || step.Name != tc.wantName || step.Reason != tc.wantReason || !step.Skipped {
+				t.Fatalf("legacySkipMessage(%#v) skipped=%v step=%#v", tc.msg, skipped, step)
 			}
 		}
 	})
@@ -298,29 +298,29 @@ func TestSpecBE2ECompressLegacyHelperBehavior(t *testing.T) {
 		opts.Reversible = true
 		opts.AlignPrefix = true
 		ccr := NewCCR(CCRConfig{TTL: time.Hour})
-		post, err := postProcessLegacyCompression(orig, "tiny", KindText, opts, FallbackTokenizer{}, 100, NewCacheAligner(CacheAlignerConfig{Enabled: true, Version: "spec-b"}), ccr)
+		content, step, err := postProcessLegacyCompression(orig, "tiny", KindText, opts, FallbackTokenizer{}, 100, NewCacheAligner(CacheAlignerConfig{Enabled: true, Version: "spec-b"}), ccr)
 		if err != nil {
 			t.Fatalf("postProcessLegacyCompression() error: %v", err)
 		}
-		if post.step.Name != "legacy_compress" || post.step.Kind != KindText.String() || post.step.Skipped {
-			t.Fatalf("post process step mismatch: %#v", post.step)
+		if step.Name != "legacy_compress" || step.Kind != KindText.String() || step.Skipped {
+			t.Fatalf("post process step mismatch: %#v", step)
 		}
-		if !strings.HasPrefix(post.content, "[headroom/spec-b]\n") || !strings.Contains(post.content, "[headroom:retrieve id=") {
-			t.Fatalf("post content missing prefix or retrieve marker: %q", post.content)
+		if !strings.HasPrefix(content, "[headroom/spec-b]\n") || !strings.Contains(content, "[headroom:retrieve id=") {
+			t.Fatalf("post content missing prefix or retrieve marker: %q", content)
 		}
-		id := strings.TrimSuffix(post.content[strings.LastIndex(post.content, "[headroom:retrieve id=")+len("[headroom:retrieve id="):], "]")
+		id := strings.TrimSuffix(content[strings.LastIndex(content, "[headroom:retrieve id=")+len("[headroom:retrieve id="):], "]")
 		if got, ok := ccr.Retrieve(id); !ok || got != orig {
 			t.Fatalf("post process CCR retrieve got len=%d ok=%v", len(got), ok)
 		}
 
 		fallbackOpts := DefaultOptions()
 		fallbackOpts.Reversible = false
-		post, err = postProcessLegacyCompression("short", "this output is longer", KindText, fallbackOpts, FallbackTokenizer{}, 1, NewCacheAligner(CacheAlignerConfig{}), ccr)
+		content, step, err = postProcessLegacyCompression("short", "this output is longer", KindText, fallbackOpts, FallbackTokenizer{}, 1, NewCacheAligner(CacheAlignerConfig{}), ccr)
 		if err != nil {
 			t.Fatalf("postProcessLegacyCompression fallback error: %v", err)
 		}
-		if post.content != "short" || !post.step.Skipped || post.step.Reason != "output not shorter" {
-			t.Fatalf("fallback mismatch: %#v content=%q", post.step, post.content)
+		if content != "short" || !step.Skipped || step.Reason != "output not shorter" {
+			t.Fatalf("fallback mismatch: %#v content=%q", step, content)
 		}
 	})
 
@@ -336,12 +336,12 @@ func TestSpecBE2ECompressLegacyHelperBehavior(t *testing.T) {
 		if err != nil {
 			t.Fatalf("routeAndCompressLegacy() error: %v", err)
 		}
-		manual, err := postProcessLegacyCompression(content, compressed, kind, opts, FallbackTokenizer{}, res.OriginalTokens, NewCacheAligner(CacheAlignerConfig{Enabled: false, Version: PrefixVersion}), getPackageCCR())
+		manualContent, manualStep, err := postProcessLegacyCompression(content, compressed, kind, opts, FallbackTokenizer{}, res.OriginalTokens, NewCacheAligner(CacheAlignerConfig{Enabled: false, Version: PrefixVersion}), getPackageCCR())
 		if err != nil {
 			t.Fatalf("postProcessLegacyCompression() error: %v", err)
 		}
-		if len(res.Messages) != 1 || res.Messages[0].Content != manual.content || res.Steps[0] != manual.step {
-			t.Fatalf("split helper behavior drift: result=%#v manual=%#v", res, manual)
+		if len(res.Messages) != 1 || res.Messages[0].Content != manualContent || res.Steps[0] != manualStep {
+			t.Fatalf("split helper behavior drift: result=%#v manualContent=%q manualStep=%#v", res, manualContent, manualStep)
 		}
 	})
 }

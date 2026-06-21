@@ -159,6 +159,50 @@ func TestProxy_StreamRejected(t *testing.T) {
 	assertJSONError(t, resp, http.StatusBadRequest, "streaming not supported")
 }
 
+func TestProxy_SpecDStreamStringRejected(t *testing.T) {
+	p := NewProxy(Config{CompressOptions: headroom.DefaultOptions()})
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"stream":"true","messages":[{"role":"user","content":"hi"}]}`))
+	rec := httptest.NewRecorder()
+	p.ServeHTTP(rec, req)
+	resp := rec.Result()
+	defer resp.Body.Close()
+	assertJSONError(t, resp, http.StatusBadRequest, "streaming not supported")
+}
+
+func TestProxy_SpecDInvalidMessagesReturnsJSON(t *testing.T) {
+	p := NewProxy(Config{CompressOptions: headroom.DefaultOptions()})
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"messages":"not-an-array"}`))
+	rec := httptest.NewRecorder()
+	p.ServeHTTP(rec, req)
+	resp := rec.Result()
+	defer resp.Body.Close()
+	assertJSONError(t, resp, http.StatusBadRequest, "invalid messages")
+}
+
+func TestProxy_SpecDMissingMessagesForwardsOriginalBody(t *testing.T) {
+	var received string
+	mock := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		received = string(body)
+		w.WriteHeader(http.StatusAccepted)
+		io.WriteString(w, `{"ok":true}`)
+	}))
+	defer mock.Close()
+	p := NewProxy(Config{UpstreamBaseURL: mock.URL, CompressOptions: headroom.DefaultOptions()})
+	original := `{"model":"gpt-4","stream":1}`
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(original))
+	rec := httptest.NewRecorder()
+	p.ServeHTTP(rec, req)
+	resp := rec.Result()
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusAccepted {
+		t.Fatalf("status=%d want %d", resp.StatusCode, http.StatusAccepted)
+	}
+	if received != original {
+		t.Fatalf("forwarded body=%q want %q", received, original)
+	}
+}
+
 // 无效 JSON → 400
 func TestProxy_InvalidJSON(t *testing.T) {
 	mock := newUpstreamMock()
@@ -228,6 +272,53 @@ func TestProxy_CompressionFailedReturnsJSON(t *testing.T) {
 	resp := rec.Result()
 	defer resp.Body.Close()
 	assertJSONError(t, resp, http.StatusInternalServerError, "compression failed")
+}
+
+func TestProxy_SpecDUnavailableTokenizerWithoutFallbackReturnsJSON(t *testing.T) {
+	opts := headroom.DefaultOptions()
+	opts.TokenizerConfig = headroom.TokenizerConfig{Backend: headroom.TokenizerTiktoken, AllowFallback: false}
+	p := NewProxy(Config{CompressOptions: opts})
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"messages":[{"role":"user","content":"hello"}]}`))
+	rec := httptest.NewRecorder()
+	p.ServeHTTP(rec, req)
+	resp := rec.Result()
+	defer resp.Body.Close()
+	assertJSONError(t, resp, http.StatusInternalServerError, "tokenizer backend not implemented")
+}
+
+func TestProxy_SpecDOversizedRequestBodyIsRejectedAsBadJSON(t *testing.T) {
+	p := NewProxy(Config{CompressOptions: headroom.DefaultOptions()})
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(strings.Repeat("{", maxRequestBodyBytes+1024)))
+	rec := httptest.NewRecorder()
+	p.ServeHTTP(rec, req)
+	resp := rec.Result()
+	defer resp.Body.Close()
+	assertJSONError(t, resp, http.StatusBadRequest, "invalid json")
+}
+
+func TestProxy_SpecDUpstreamNon200StatusPassthrough(t *testing.T) {
+	mock := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-Upstream-Reason", "rate-limited")
+		w.WriteHeader(http.StatusTooManyRequests)
+		io.WriteString(w, `{"error":"rate limit"}`)
+	}))
+	defer mock.Close()
+	p := NewProxy(Config{UpstreamBaseURL: mock.URL, CompressOptions: headroom.Options{Aggressiveness: 0.5, Reversible: false}})
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"messages":[{"role":"user","content":"hello"}]}`))
+	rec := httptest.NewRecorder()
+	p.ServeHTTP(rec, req)
+	resp := rec.Result()
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusTooManyRequests {
+		t.Fatalf("status=%d want %d", resp.StatusCode, http.StatusTooManyRequests)
+	}
+	if resp.Header.Get("X-Upstream-Reason") != "rate-limited" {
+		t.Fatalf("upstream header was not passed through: %#v", resp.Header)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	if !strings.Contains(string(body), "rate limit") {
+		t.Fatalf("upstream body was not passed through: %s", body)
+	}
 }
 
 func TestProxy_UpstreamRequestFailedReturnsJSON(t *testing.T) {

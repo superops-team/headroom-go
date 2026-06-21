@@ -5,10 +5,6 @@ import (
 	"strings"
 )
 
-type CompressionConfig struct {
-	Aggressiveness float64
-}
-
 type CodeConfig = CompressionConfig
 
 // CompressCode 压缩代码文本。

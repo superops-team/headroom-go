@@ -66,10 +66,6 @@ func compressionConfigFromOptions(opts Options) CompressionConfig {
 	return CompressionConfig{Aggressiveness: opts.Aggressiveness}
 }
 
-func smartCrushConfigFromOptions(opts Options) SmartCrushConfig {
-	return SmartCrushConfig{Aggressiveness: opts.Aggressiveness}
-}
-
 var (
 	defaultCompressorRegistryOnce sync.Once
 	defaultCompressorRegistry     *CompressorRegistry
@@ -79,7 +75,7 @@ func DefaultCompressorRegistry() *CompressorRegistry {
 	defaultCompressorRegistryOnce.Do(func() {
 		defaultCompressorRegistry = NewCompressorRegistry()
 		defaultCompressorRegistry.Register(NewCompressorFunc(KindJSON, func(content string, opts Options) (string, error) {
-			return SmartCrushJSON(content, smartCrushConfigFromOptions(opts))
+			return SmartCrushJSON(content, SmartCrushConfig{Aggressiveness: opts.Aggressiveness})
 		}))
 		defaultCompressorRegistry.Register(NewCompressorFunc(KindCode, func(content string, opts Options) (string, error) {
 			return CompressCode(content, compressionConfigFromOptions(opts)), nil
