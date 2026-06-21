@@ -2,6 +2,21 @@
 
 All notable changes to this project will be documented in this file.
 
+## [v0.4.3] - 2026-06-21
+
+### Changed
+
+- README 全面重写：增加痛点开场、对比表、真实场景用例、成本节省估算
+- 新增 Killer Features 专区（Tag Protector、CCR、CacheAligner、Proxy）
+- 新增贡献指南和 Go Reference badge
+- 视觉优化：居中布局、emoji 导航、底部趣味文案
+
+## [v0.4.2] - 2026-06-21
+
+### Fixed
+
+- Fixed Spec C and Spec D brooks-lint issues and expanded coverage tests.
+
 ## [v0.4.1] - 2026-06-21
 
 ### Changed
