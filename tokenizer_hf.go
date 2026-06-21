@@ -3,12 +3,8 @@
 
 package headroom
 
-func NewHuggingFaceTokenizerStub() Tokenizer {
-	return notImplementedTokenizer{name: "huggingface-stub"}
-}
+import "github.com/superops-team/headroom-go/internal/tokenizer"
 
-func init() {
-	newHuggingFaceTokenizer = func(cfg TokenizerConfig) (Tokenizer, error) {
-		return NewHuggingFaceTokenizerStub(), ErrTokenizerNotImplemented
-	}
+func NewHuggingFaceTokenizerStub() Tokenizer {
+	return tokenizer.NewHuggingFaceTokenizerStub()
 }

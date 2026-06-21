@@ -3,12 +3,8 @@
 
 package headroom
 
-func NewTiktokenTokenizerStub() Tokenizer {
-	return notImplementedTokenizer{name: "tiktoken-stub"}
-}
+import "github.com/superops-team/headroom-go/internal/tokenizer"
 
-func init() {
-	newTiktokenTokenizer = func(cfg TokenizerConfig) (Tokenizer, error) {
-		return NewTiktokenTokenizerStub(), ErrTokenizerNotImplemented
-	}
+func NewTiktokenTokenizerStub() Tokenizer {
+	return tokenizer.NewTiktokenTokenizerStub()
 }

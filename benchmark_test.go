@@ -4,6 +4,9 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/superops-team/headroom-go/internal/compressors"
+	eng "github.com/superops-team/headroom-go/internal/engine"
 )
 
 func BenchmarkTokenizerFallback_1MB(b *testing.B) {
@@ -76,8 +79,8 @@ func BenchmarkSmartCrusher_Array_10k(b *testing.B) {
 
 func BenchmarkDiffCompressor_5kLines(b *testing.B) {
 	content := buildBenchmarkDiff(5000)
-	ctx := CompressionContext{ContentKind: KindDiff, Query: "needle", CCR: getPackageCCR()}
-	t := diffOffloadTransform{}
+	ctx := eng.CompressionContext{ContentKind: KindDiff, Query: "needle", CCR: getPackageCCR()}
+	t := compressors.NewDiffOffloadTransform()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		_, _ = t.Apply(content, ctx)
@@ -86,8 +89,8 @@ func BenchmarkDiffCompressor_5kLines(b *testing.B) {
 
 func BenchmarkLogCompressor_50kLines(b *testing.B) {
 	content := buildBenchmarkLog(50000)
-	ctx := CompressionContext{ContentKind: KindLog, CCR: getPackageCCR()}
-	t := logOffloadTransform{}
+	ctx := eng.CompressionContext{ContentKind: KindLog, CCR: getPackageCCR()}
+	t := compressors.NewLogOffloadTransform()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		_, _ = t.Apply(content, ctx)
@@ -96,8 +99,8 @@ func BenchmarkLogCompressor_50kLines(b *testing.B) {
 
 func BenchmarkSearchCompressor_10kMatches(b *testing.B) {
 	content := buildBenchmarkSearch(10000)
-	ctx := CompressionContext{ContentKind: KindSearch, Query: "target", CCR: getPackageCCR()}
-	t := searchOffloadTransform{}
+	ctx := eng.CompressionContext{ContentKind: KindSearch, Query: "target", CCR: getPackageCCR()}
+	t := compressors.NewSearchOffloadTransform()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		_, _ = t.Apply(content, ctx)

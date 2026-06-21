@@ -4,6 +4,9 @@ import (
 	"errors"
 	"strings"
 	"testing"
+
+	"github.com/superops-team/headroom-go/internal/compressors"
+	eng "github.com/superops-team/headroom-go/internal/engine"
 )
 
 func TestSpecD_EstimateTokensDirect(t *testing.T) {
@@ -164,7 +167,7 @@ func TestSpecD_HTMLCompressionEndToEnd(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			out, err := (htmlCleanTransform{}).Apply(tc.content, CompressionContext{ContentKind: KindHTML, Aggressiveness: 0.7})
+			out, err := compressors.NewHTMLCleanTransform().Apply(tc.content, CompressionContext{ContentKind: KindHTML, Aggressiveness: 0.7})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -278,27 +281,27 @@ func TestSpecD_CompressStringBoundaries(t *testing.T) {
 }
 
 func TestSpecD_TransformNamesAndUnwrap(t *testing.T) {
-	if (diffOffloadTransform{}).Name() != "diff_offload" {
+	if compressors.NewDiffOffloadTransform().Name() != "diff_offload" {
 		t.Fatal("unexpected diff transform name")
 	}
-	if (logOffloadTransform{}).Name() != "log_offload" {
+	if compressors.NewLogOffloadTransform().Name() != "log_offload" {
 		t.Fatal("unexpected log transform name")
 	}
-	if (searchOffloadTransform{}).Name() != "search_offload" {
+	if compressors.NewSearchOffloadTransform().Name() != "search_offload" {
 		t.Fatal("unexpected search transform name")
 	}
-	if (htmlCleanTransform{}).Name() != "html_clean" {
+	if compressors.NewHTMLCleanTransform().Name() != "html_clean" {
 		t.Fatal("unexpected html transform name")
 	}
 	cause := errors.New("cause")
 	if !errors.Is(NewTransformError(TransformErrorInternal, "spec_d", "wrapped", cause), cause) {
 		t.Fatal("TransformError should unwrap cause")
 	}
-	logOut, err := (logOffloadTransform{}).Apply(strings.Repeat("[INFO] noisy\n", 30)+"[ERROR] keep\n"+strings.Repeat("[DEBUG] noisy\n", 30), CompressionContext{ContentKind: KindLog})
+	logOut, err := compressors.NewLogOffloadTransform().Apply(strings.Repeat("[INFO] noisy\n", 30)+"[ERROR] keep\n"+strings.Repeat("[DEBUG] noisy\n", 30), CompressionContext{ContentKind: KindLog})
 	if err != nil || !strings.Contains(logOut.Output, "[... omitted low-priority log lines ...]") {
 		t.Fatalf("log offload output=%q err=%v", logOut.Output, err)
 	}
-	jsonTransform := jsonOffloadTransform{}
+	jsonTransform := eng.NewJSONOffloadTransform()
 	if jsonTransform.Name() != "json_offload" || jsonTransform.Confidence() <= 0 || jsonTransform.EstimateBloat(strings.Repeat("x", 201), CompressionContext{}) == 0 {
 		t.Fatal("json offload metadata not covered")
 	}

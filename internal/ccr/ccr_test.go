@@ -1,9 +1,11 @@
-package headroom
+package ccr
 
 import (
 	"strconv"
 	"testing"
 	"time"
+
+	"github.com/superops-team/headroom-go/internal/types"
 )
 
 func TestCCR_StoreAndRetrieve(t *testing.T) {
@@ -11,7 +13,7 @@ func TestCCR_StoreAndRetrieve(t *testing.T) {
 	orig := "the quick brown fox jumps over the lazy dog"
 	comp := "quick brown fox lazy dog"
 
-	id := c.Store(orig, comp, KindText)
+	id := c.Store(orig, comp, types.KindText)
 	if id == "" {
 		t.Fatal("empty id")
 	}
@@ -41,8 +43,8 @@ func TestCCR_RetrieveMissing(t *testing.T) {
 // Stats 计数
 func TestCCR_Stats(t *testing.T) {
 	c := NewCCR(CCRConfig{TTL: time.Hour})
-	c.Store("a", "a", KindText)
-	c.Store("b", "b", KindText)
+	c.Store("a", "a", types.KindText)
+	c.Store("b", "b", types.KindText)
 	count, totalBytes := c.Stats()
 	if count != 2 {
 		t.Errorf("count got %d, want 2", count)
@@ -55,8 +57,8 @@ func TestCCR_Stats(t *testing.T) {
 // 多次 Store 同一内容 → 同一 id，返回同一值
 func TestCCR_SameContentSameId(t *testing.T) {
 	c := NewCCR(CCRConfig{TTL: time.Hour})
-	id1 := c.Store("hello world", "hello", KindText)
-	id2 := c.Store("hello world", "hello", KindText)
+	id1 := c.Store("hello world", "hello", types.KindText)
+	id2 := c.Store("hello world", "hello", types.KindText)
 	if id1 != id2 {
 		t.Errorf("same content should give same id: %s vs %s", id1, id2)
 	}
@@ -65,10 +67,10 @@ func TestCCR_SameContentSameId(t *testing.T) {
 // 惰性 GC：Store 时清理过期条目
 func TestCCR_LazyGC(t *testing.T) {
 	c := NewCCR(CCRConfig{TTL: time.Hour}) // 长 TTL 确保期间不过期
-	c.Store("expire_me", "exp", KindText)
+	c.Store("expire_me", "exp", types.KindText)
 
 	// 立即再 Store 一次，之前的条目还没过期
-	c.Store("another", "ano", KindText)
+	c.Store("another", "ano", types.KindText)
 	count, _ := c.Stats()
 	if count != 2 {
 		t.Fatalf("before expiry: got %d entries, want 2", count)
@@ -81,7 +83,7 @@ func TestCCR_MaxEntries(t *testing.T) {
 	// Store 101 条不同内容
 	for i := 0; i < 101; i++ {
 		content := "entry-" + strconv.Itoa(i)
-		c.Store(content, content, KindText)
+		c.Store(content, content, types.KindText)
 	}
 	count, _ := c.Stats()
 	if count > 100 {
@@ -91,8 +93,8 @@ func TestCCR_MaxEntries(t *testing.T) {
 
 func TestCCR_MaxEntriesEvictsOldestWhenStoringNewID(t *testing.T) {
 	c := NewCCR(CCRConfig{TTL: time.Hour, MaxEntries: 1})
-	idA := c.Store("A", "a", KindText)
-	idB := c.Store("B", "b", KindText)
+	idA := c.Store("A", "a", types.KindText)
+	idB := c.Store("B", "b", types.KindText)
 	if idA == idB {
 		t.Fatal("different content should have different ids")
 	}
@@ -106,8 +108,8 @@ func TestCCR_MaxEntriesEvictsOldestWhenStoringNewID(t *testing.T) {
 
 func TestCCR_MaxEntriesRepeatStoreDoesNotEvictSameID(t *testing.T) {
 	c := NewCCR(CCRConfig{TTL: time.Hour, MaxEntries: 1})
-	id1 := c.Store("A", "a", KindText)
-	id2 := c.Store("A", "a2", KindText)
+	id1 := c.Store("A", "a", types.KindText)
+	id2 := c.Store("A", "a2", types.KindText)
 	if id1 != id2 {
 		t.Fatalf("repeat store should return same id: %q vs %q", id1, id2)
 	}
@@ -123,7 +125,7 @@ func TestCCR_MaxEntriesRepeatStoreDoesNotEvictSameID(t *testing.T) {
 // 后台 GC：过期条目被 Ticker 清理
 func TestCCR_BackgroundGC(t *testing.T) {
 	c := NewCCR(CCRConfig{TTL: 50 * time.Millisecond, MaxEntries: 1000})
-	c.Store("will-expire", "x", KindText)
+	c.Store("will-expire", "x", types.KindText)
 
 	// 等待 TTL 过期 + Ticker 触发（30min 默认 ticker 太长，这里验证惰性 GC 即可）
 	// 后台 GC 的 Ticker 间隔为 30min，单元测试中不等待 Ticker。
@@ -134,7 +136,7 @@ func TestCCR_BackgroundGC(t *testing.T) {
 		t.Error("expired entry should not be retrievable")
 	}
 	// Store 触发惰性 GC，清理过期条目
-	c.Store("new-entry", "y", KindText)
+	c.Store("new-entry", "y", types.KindText)
 	count, _ := c.Stats()
 	if count != 1 {
 		t.Errorf("after GC: got %d entries, want 1", count)

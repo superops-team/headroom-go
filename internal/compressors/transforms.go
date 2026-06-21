@@ -1,4 +1,4 @@
-package headroom
+package compressors
 
 import "strings"
 
@@ -145,6 +145,12 @@ func splitSearchLine(line string) (string, string) {
 
 type htmlCleanTransform struct{}
 
+func NewDiffOffloadTransform() OffloadTransform     { return diffOffloadTransform{} }
+func NewLogTemplateTransform() ReformatTransform    { return logTemplateTransform{} }
+func NewLogOffloadTransform() OffloadTransform      { return logOffloadTransform{} }
+func NewSearchOffloadTransform() OffloadTransform   { return searchOffloadTransform{} }
+func NewHTMLCleanTransform() ReformatTransform      { return htmlCleanTransform{} }
+
 func (htmlCleanTransform) Name() string             { return "html_clean" }
 func (htmlCleanTransform) AppliesTo() []ContentKind { return []ContentKind{KindHTML} }
 func (htmlCleanTransform) Apply(content string, ctx CompressionContext) (ReformatOutput, error) {
@@ -174,6 +180,10 @@ func removeHTMLBlock(s, tag string) string {
 	}
 }
 
+func RemoveHTMLBlock(s, tag string) string {
+	return removeHTMLBlock(s, tag)
+}
+
 func removeHTMLComments(s string) string {
 	for {
 		start := strings.Index(s, "<!--")
@@ -187,4 +197,8 @@ func removeHTMLComments(s string) string {
 		end = start + 4 + end + 3
 		s = s[:start] + s[end:]
 	}
+}
+
+func RemoveHTMLComments(s string) string {
+	return removeHTMLComments(s)
 }

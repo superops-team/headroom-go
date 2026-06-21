@@ -1,6 +1,5 @@
 package headroom
 
-type CCRStore interface {
-	Store(original, compressed string, kind ContentKind) string
-	Retrieve(id string) (string, bool)
-}
+import "github.com/superops-team/headroom-go/internal/types"
+
+type CCRStore = types.CCRStore

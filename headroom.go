@@ -1,65 +1,62 @@
 package headroom
 
 import (
+	"bytes"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
-	"sync"
-	"time"
+
+	"github.com/superops-team/headroom-go/internal/cachealigner"
+	"github.com/superops-team/headroom-go/internal/compressors"
+	eng "github.com/superops-team/headroom-go/internal/engine"
+	"github.com/superops-team/headroom-go/internal/router"
+	"github.com/superops-team/headroom-go/internal/tokenizer"
+	"github.com/superops-team/headroom-go/internal/types"
 )
 
-// packageLevelCCR 是整个包共享的可逆压缩存储实例。
-// 每次调用 Compress/CompressString 时使用同一实例，确保 id 跨调用可检索。
-var (
-	packageCCROnce sync.Once
-	packageCCR     *CCR
+// Message represents a chat message compatible with OpenAI Messages format.
+type Message = types.Message
+
+// Options controls compression behavior.
+type Options = types.Options
+
+// Result is the output of Compress.
+type Result = types.Result
+
+// CompressionEngine compresses message batches with resolved dependencies.
+type CompressionEngine = eng.CompressionEngine
+type CompressionContext = types.CompressionContext
+type CompressionPolicy = types.CompressionPolicy
+type PolicyDecision = types.PolicyDecision
+type PolicyMode = types.PolicyMode
+type TransformKind = types.TransformKind
+type TransformErrorKind = types.TransformErrorKind
+type TransformError = types.TransformError
+type ReformatOutput = types.ReformatOutput
+type OffloadOutput = types.OffloadOutput
+type ReformatTransform = types.ReformatTransform
+type OffloadTransform = types.OffloadTransform
+type PipelineResult = types.PipelineResult
+
+type Pipeline struct {
+	reformats []ReformatTransform
+	offloads  []OffloadTransform
+}
+
+const (
+	PolicyConservative = types.PolicyConservative
+	PolicyStandard     = types.PolicyStandard
+	PolicyAggressive   = types.PolicyAggressive
+
+	TransformReformat = types.TransformReformat
+	TransformOffload  = types.TransformOffload
+
+	TransformErrorInvalidInput = types.TransformErrorInvalidInput
+	TransformErrorSkipped      = types.TransformErrorSkipped
+	TransformErrorInternal     = types.TransformErrorInternal
 )
 
-func getPackageCCR() *CCR {
-	packageCCROnce.Do(func() {
-		packageCCR = NewCCR(CCRConfig{TTL: 24 * time.Hour})
-	})
-	return packageCCR
-}
-
-// Message 表示聊天消息，与 OpenAI Messages 格式兼容。
-type Message struct {
-	Role    string `json:"role"`
-	Content string `json:"content"`
-	Name    string `json:"name,omitempty"`
-}
-
-// Options 控制压缩强度与可选项。
-type Options struct {
-	// Aggressiveness 控制压缩激进程度。0.0-0.3保守、0.3-0.7标准、0.7-1.0激进。
-	// 默认 0.5。
-	Aggressiveness float64
-	// Reversible 是否启用可逆压缩：原始内容本地缓存，压缩输出末尾附加检索 id。
-	// 默认 true。
-	Reversible bool
-	// AlignPrefix 是否在输出前加版本化前缀（提升 Provider side cache 命中率）。
-	// 默认 false。
-	AlignPrefix bool
-	// TokenLimit 可选：估算 token 数低于该阈值时跳过压缩。0 表示不限制。
-	// 默认 0。
-	TokenLimit      int
-	TokenizerConfig TokenizerConfig
-	TokenBudget     int
-	Query           string
-	EnablePipeline  bool
-	Observer        Observer
-}
-
-// Result 是 Compress 的输出。
-type Result struct {
-	Messages         []Message
-	CompressedTokens int
-	OriginalTokens   int
-	Savings          float64
-	Warnings         []Warning
-	Steps            []CompressionStep
-}
-
-// DefaultOptions 返回推荐的默认选项。
 func DefaultOptions() Options {
 	return Options{
 		Aggressiveness: 0.5,
@@ -69,7 +66,23 @@ func DefaultOptions() Options {
 	}
 }
 
-// Compress 压缩一组聊天消息。assistant 角色消息原样透传。
+func NewCompressionEngine(opts Options) (*CompressionEngine, []Warning) {
+	return eng.NewCompressionEngine(opts)
+}
+
+func DefaultCompressionPolicy(aggressiveness float64) CompressionPolicy {
+	return types.DefaultCompressionPolicy(aggressiveness)
+}
+
+func NewTransformError(kind TransformErrorKind, transform, message string, cause error) TransformError {
+	return types.NewTransformError(kind, transform, message, cause)
+}
+
+func NewDefaultPipeline() *Pipeline {
+	return &Pipeline{reformats: []ReformatTransform{legacyTextTransform{}, legacyCodeTransform{}, jsonMinifierTransform{}, compressors.NewLogTemplateTransform(), compressors.NewHTMLCleanTransform()}, offloads: []OffloadTransform{compressors.NewDiffOffloadTransform(), compressors.NewLogOffloadTransform(), compressors.NewSearchOffloadTransform(), jsonOffloadTransform{}}}
+}
+
+// Compress compresses a batch of chat messages.
 func Compress(messages []Message, opts Options) (*Result, error) {
 	engine, warnings := NewCompressionEngine(opts)
 	result, err := engine.Compress(messages, opts)
@@ -79,10 +92,34 @@ func Compress(messages []Message, opts Options) (*Result, error) {
 	return result, err
 }
 
-func compressLegacy(messages []Message, opts Options, tokenizer Tokenizer, initialWarnings []Warning, observer Observer) (*Result, error) {
-	router := NewContentRouter()
-	ccr := getPackageCCR()
-	aligner := NewCacheAligner(CacheAlignerConfig{
+// CompressString compresses a single text input.
+func CompressString(content string, opts Options) (string, error) {
+	r, err := Compress([]Message{{Role: "user", Content: content}}, opts)
+	if err != nil {
+		return "", err
+	}
+	if len(r.Messages) == 0 {
+		return "", nil
+	}
+	return r.Messages[0].Content, nil
+}
+
+func estimateTokens(s string) int {
+	n, _ := tokenizer.FallbackTokenizer{}.Count(s)
+	return n
+}
+
+func countTokens(tok Tokenizer, content string) (int, error) {
+	if tok == nil {
+		tok = tokenizer.FallbackTokenizer{}
+	}
+	return tok.Count(content)
+}
+
+func compressLegacy(messages []Message, opts Options, tok Tokenizer, initialWarnings []Warning, observer Observer) (*Result, error) {
+	r := router.NewContentRouter()
+	store := getPackageCCR()
+	aligner := cachealigner.NewCacheAligner(cachealigner.CacheAlignerConfig{
 		Enabled: opts.AlignPrefix,
 		Version: PrefixVersion,
 	})
@@ -94,7 +131,7 @@ func compressLegacy(messages []Message, opts Options, tokenizer Tokenizer, initi
 	steps := make([]CompressionStep, 0, len(messages))
 
 	for _, m := range messages {
-		msgTokens, err := countTokens(tokenizer, m.Content)
+		msgTokens, err := countTokens(tok, m.Content)
 		if err != nil {
 			return nil, err
 		}
@@ -107,23 +144,19 @@ func compressLegacy(messages []Message, opts Options, tokenizer Tokenizer, initi
 			continue
 		}
 
-		kind, out, err := routeAndCompressLegacy(router, DefaultCompressorRegistry(), m.Content, opts)
+		kind, out, err := routeAndCompressLegacy(r, compressors.DefaultCompressorRegistry(), m.Content, opts)
 		if err != nil {
 			return nil, err
 		}
 
-		out, step, err := postProcessLegacyCompression(m.Content, out, kind, opts, tokenizer, msgTokens, aligner, ccr)
+		out, step, err := postProcessLegacyCompression(m.Content, out, kind, opts, tok, msgTokens, aligner, store)
 		if err != nil {
 			return nil, err
 		}
 		steps = append(steps, step)
 
-		compressedMsgs = append(compressedMsgs, Message{
-			Role:    m.Role,
-			Content: out,
-			Name:    m.Name,
-		})
-		outTokens, err := countTokens(tokenizer, out)
+		compressedMsgs = append(compressedMsgs, Message{Role: m.Role, Content: out, Name: m.Name})
+		outTokens, err := countTokens(tok, out)
 		if err != nil {
 			return nil, err
 		}
@@ -153,8 +186,8 @@ func legacySkipMessage(m Message, opts Options, msgTokens int) (bool, Compressio
 	return false, CompressionStep{}
 }
 
-func routeAndCompressLegacy(router *ContentRouter, registry *CompressorRegistry, content string, opts Options) (ContentKind, string, error) {
-	kind := router.Detect(content)
+func routeAndCompressLegacy(r *ContentRouter, registry *CompressorRegistry, content string, opts Options) (ContentKind, string, error) {
+	kind := r.Detect(content)
 	out, err := registry.Compress(kind, content, opts)
 	if err != nil {
 		return kind, "", fmt.Errorf("compress %s: %w", kind.String(), err)
@@ -162,14 +195,14 @@ func routeAndCompressLegacy(router *ContentRouter, registry *CompressorRegistry,
 	return kind, out, nil
 }
 
-func postProcessLegacyCompression(original, compressed string, kind ContentKind, opts Options, tokenizer Tokenizer, msgTokens int, aligner *CacheAligner, ccr *CCR) (string, CompressionStep, error) {
+func postProcessLegacyCompression(original, compressed string, kind ContentKind, opts Options, tok Tokenizer, msgTokens int, aligner *CacheAligner, store *CCR) (string, CompressionStep, error) {
 	out := applyAlignPrefix(compressed, opts, aligner)
-	out = applyReversibleCCR(original, out, kind, opts, ccr)
+	out = applyReversibleCCR(original, out, kind, opts, store)
 	if fallbackContent, fallbackStep, fallback := applyFallbackIfLonger(original, out, kind, msgTokens); fallback {
 		return fallbackContent, fallbackStep, nil
 	}
 
-	outTokens, err := countTokens(tokenizer, out)
+	outTokens, err := countTokens(tok, out)
 	if err != nil {
 		return "", CompressionStep{}, err
 	}
@@ -183,9 +216,9 @@ func applyAlignPrefix(out string, opts Options, aligner *CacheAligner) string {
 	return out
 }
 
-func applyReversibleCCR(original, out string, kind ContentKind, opts Options, ccr *CCR) string {
+func applyReversibleCCR(original, out string, kind ContentKind, opts Options, store *CCR) string {
 	if opts.Reversible {
-		id := ccr.Store(original, out, kind)
+		id := store.Store(original, out, kind)
 		retrieveSuffix := "\n\n[headroom:retrieve id=" + id + "]"
 		out += retrieveSuffix
 	}
@@ -212,27 +245,268 @@ func buildLegacyResult(messages []Message, origTokens, compTokens int, warnings 
 	return &Result{Messages: messages, CompressedTokens: compTokens, OriginalTokens: origTokens, Savings: savings, Warnings: warnings, Steps: steps}
 }
 
-// CompressString 压缩单段文本。适合快速测试或单次内容压缩。
-func CompressString(content string, opts Options) (string, error) {
-	r, err := Compress([]Message{{Role: "user", Content: content}}, opts)
-	if err != nil {
-		return "", err
+func (p *Pipeline) Run(content string, ctx CompressionContext, policy CompressionPolicy) PipelineResult {
+	before, beforeWarning := countTokensForPipeline(ctx.Tokenizer, content, "before")
+	current := content
+	result := PipelineResult{Output: content, TokensBefore: before, TokensAfter: before}
+	if beforeWarning != nil {
+		result.Warnings = append(result.Warnings, *beforeWarning)
 	}
-	if len(r.Messages) == 0 {
-		return "", nil
+	decision, warnings := policy.Decide(ctx)
+	result.Warnings = append(result.Warnings, warnings...)
+	if !decision.ShouldCompress {
+		result.Steps = append(result.Steps, CompressionStep{Name: "policy", Kind: ctx.ContentKind.String(), TokensBefore: before, TokensAfter: before, Skipped: true, Reason: decision.Reason})
+		return result
 	}
-	return r.Messages[0].Content, nil
+	for _, t := range p.reformats {
+		if !appliesTo(t.AppliesTo(), ctx.ContentKind) {
+			continue
+		}
+		out, err := t.Apply(current, ctx)
+		if err != nil {
+			result.Warnings = append(result.Warnings, warningFromTransformError(t.Name(), err))
+			continue
+		}
+		if out.Output != "" && len(out.Output) < len(current) {
+			current = out.Output
+			result.StepsApplied = append(result.StepsApplied, t.Name())
+		}
+		result.Warnings = append(result.Warnings, out.Warnings...)
+		result.Steps = append(result.Steps, out.Steps...)
+	}
+	if containsTransformKind(decision.AllowedKinds, TransformOffload) {
+		for _, t := range p.offloads {
+			if !appliesTo(t.AppliesTo(), ctx.ContentKind) || t.Confidence() < 0.5 || t.EstimateBloat(current, ctx) < policy.BloatThreshold {
+				continue
+			}
+			out, err := t.Apply(current, ctx)
+			if err != nil {
+				result.Warnings = append(result.Warnings, warningFromTransformError(t.Name(), err))
+				continue
+			}
+			if out.Output != "" && len(out.Output) < len(current) {
+				current = out.Output
+				result.StepsApplied = append(result.StepsApplied, t.Name())
+				if out.CacheKey != "" {
+					result.CacheKeys = append(result.CacheKeys, out.CacheKey)
+				}
+			}
+			result.Warnings = append(result.Warnings, out.Warnings...)
+			result.Steps = append(result.Steps, out.Steps...)
+		}
+	}
+	after, afterWarning := countTokensForPipeline(ctx.Tokenizer, current, "after")
+	if afterWarning != nil {
+		result.Warnings = append(result.Warnings, *afterWarning)
+	}
+	if len(current) >= len(content) {
+		current = content
+		after = before
+		result.Steps = append(result.Steps, CompressionStep{Name: "pipeline", Kind: ctx.ContentKind.String(), TokensBefore: before, TokensAfter: after, Skipped: true, Reason: "output not shorter"})
+	}
+	result.Output = current
+	result.BytesSaved = len(content) - len(current)
+	result.TokensAfter = after
+	if ctx.Observer != nil {
+		for _, step := range result.Steps {
+			ctx.Observer.ObserveCompressionStep(step)
+		}
+	}
+	return result
 }
 
-// estimateTokens 估算 token 数（按 ~4 chars/token 的粗略估算）。
-func estimateTokens(s string) int {
-	n, _ := FallbackTokenizer{}.Count(s)
+func countTokensForPipeline(tok Tokenizer, content, phase string) (int, *Warning) {
+	count, err := countTokens(tok, content)
+	if err == nil {
+		return count, nil
+	}
+	fallbackCount, fallbackErr := tokenizer.FallbackTokenizer{}.Count(content)
+	message := err.Error()
+	if fallbackErr != nil {
+		message += "; fallback count failed: " + fallbackErr.Error()
+		return 0, &Warning{Code: "tokenizer_count_error", Component: "pipeline", Message: message}
+	}
+	return fallbackCount, &Warning{Code: "tokenizer_count_error", Component: "pipeline", Message: "token count " + phase + " failed; used fallback tokenizer: " + message}
+}
+
+func appliesTo(kinds []ContentKind, want ContentKind) bool {
+	for _, kind := range kinds {
+		if kind == want {
+			return true
+		}
+	}
+	return false
+}
+
+func containsTransformKind(kinds []TransformKind, want TransformKind) bool {
+	return types.ContainsTransformKind(kinds, want)
+}
+
+type legacyTextTransform struct{}
+
+func (legacyTextTransform) Name() string             { return "legacy_text" }
+func (legacyTextTransform) AppliesTo() []ContentKind { return []ContentKind{KindText} }
+func (legacyTextTransform) Apply(content string, ctx CompressionContext) (ReformatOutput, error) {
+	out := compressors.CompressText(content, compressors.TextConfig{Aggressiveness: ctx.Aggressiveness})
+	return ReformatOutput{Output: out, BytesSaved: len(content) - len(out), Steps: []CompressionStep{{Name: "legacy_text", Kind: ctx.ContentKind.String()}}}, nil
+}
+
+type legacyCodeTransform struct{}
+
+func (legacyCodeTransform) Name() string             { return "legacy_code" }
+func (legacyCodeTransform) AppliesTo() []ContentKind { return []ContentKind{KindCode} }
+func (legacyCodeTransform) Apply(content string, ctx CompressionContext) (ReformatOutput, error) {
+	out := compressors.CompressCode(content, compressors.CodeConfig{Aggressiveness: ctx.Aggressiveness})
+	return ReformatOutput{Output: out, BytesSaved: len(content) - len(out), Steps: []CompressionStep{{Name: "legacy_code", Kind: ctx.ContentKind.String()}}}, nil
+}
+
+type jsonMinifierTransform struct{}
+
+func (jsonMinifierTransform) Name() string             { return "json_minifier" }
+func (jsonMinifierTransform) AppliesTo() []ContentKind { return []ContentKind{KindJSON} }
+func (jsonMinifierTransform) Apply(content string, ctx CompressionContext) (ReformatOutput, error) {
+	var buf bytes.Buffer
+	if err := json.Compact(&buf, []byte(content)); err != nil {
+		return ReformatOutput{}, NewTransformError(TransformErrorInvalidInput, "json_minifier", "invalid JSON", err)
+	}
+	out := buf.String()
+	return ReformatOutput{Output: out, BytesSaved: len(content) - len(out), Steps: []CompressionStep{{Name: "json_minifier", Kind: ctx.ContentKind.String()}}}, nil
+}
+
+type jsonOffloadTransform struct{}
+
+func NewJSONOffloadTransform() OffloadTransform { return jsonOffloadTransform{} }
+
+func (jsonOffloadTransform) Name() string             { return "json_offload" }
+func (jsonOffloadTransform) AppliesTo() []ContentKind { return []ContentKind{KindJSON} }
+func (jsonOffloadTransform) EstimateBloat(content string, ctx CompressionContext) float64 {
+	if len(content) > 200 {
+		return 1
+	}
+	return 0
+}
+func (jsonOffloadTransform) Confidence() float64 { return 0.7 }
+func (jsonOffloadTransform) Apply(content string, ctx CompressionContext) (OffloadOutput, error) {
+	crushed, steps, err := compressors.SmartCrushJSONWithSteps(content, compressors.SmartCrushConfig{Aggressiveness: ctx.Aggressiveness})
+	if err != nil {
+		return OffloadOutput{}, NewTransformError(TransformErrorInternal, "json_offload", "smart crusher failed", err)
+	}
+	id := ""
+	if ctx.CCR != nil {
+		id = ctx.CCR.Store(content, crushed, ctx.ContentKind)
+	}
+	steps = append([]CompressionStep{{Name: "json_offload", Kind: ctx.ContentKind.String()}}, steps...)
+	return OffloadOutput{Output: crushed, BytesSaved: len(content) - len(crushed), CacheKey: id, Steps: steps}, nil
+}
+
+func warningFromTransformError(component string, err error) Warning {
+	if te, ok := err.(TransformError); ok {
+		return Warning{Code: "transform_error_" + string(te.Kind), Component: component, Message: te.Error()}
+	}
+	return Warning{Code: "transform_error", Component: component, Message: fmt.Sprint(err)}
+}
+
+type htmlCleanTransform struct{}
+
+func (htmlCleanTransform) Name() string             { return "html_clean" }
+func (htmlCleanTransform) AppliesTo() []ContentKind { return []ContentKind{KindHTML} }
+func (htmlCleanTransform) Apply(content string, ctx CompressionContext) (ReformatOutput, error) {
+	return compressors.NewHTMLCleanTransform().Apply(content, ctx)
+}
+
+func removeHTMLBlock(s, tag string) string {
+	return compressors.RemoveHTMLBlock(s, tag)
+}
+
+func removeHTMLComments(s string) string {
+	return compressors.RemoveHTMLComments(s)
+}
+
+type errorTokenizer struct{}
+
+func (errorTokenizer) Name() string { return "error" }
+func (errorTokenizer) Count(string) (int, error) {
+	return 0, errors.New("tokenizer boom")
+}
+func (errorTokenizer) CountBatch([]string) ([]int, error) {
+	return nil, errors.New("tokenizer boom")
+}
+
+type CompressionConfig = compressors.CompressionConfig
+type CodeConfig = compressors.CodeConfig
+type TextConfig = compressors.TextConfig
+type SmartCrushConfig = compressors.SmartCrushConfig
+type Crushability = compressors.Crushability
+type DetectedPattern = compressors.DetectedPattern
+type RecommendedStrategy = compressors.RecommendedStrategy
+type FieldStat = compressors.FieldStat
+type ArrayAnalysis = compressors.ArrayAnalysis
+type CompressionPlan = compressors.CompressionPlan
+type Compressor = compressors.Compressor
+type CompressorFunc = compressors.CompressorFunc
+type CompressorRegistry = compressors.CompressorRegistry
+
+const (
+	CrushabilityLow    = compressors.CrushabilityLow
+	CrushabilityMedium = compressors.CrushabilityMedium
+	CrushabilityHigh   = compressors.CrushabilityHigh
+
+	DetectedPatternLowSignal          = compressors.DetectedPatternLowSignal
+	DetectedPatternPrimitiveSequence  = compressors.DetectedPatternPrimitiveSequence
+	DetectedPatternHomogeneousObjects = compressors.DetectedPatternHomogeneousObjects
+	DetectedPatternMixedObjects       = compressors.DetectedPatternMixedObjects
+
+	RecommendedStrategyPassthrough         = compressors.RecommendedStrategyPassthrough
+	RecommendedStrategySummarizePrimitives = compressors.RecommendedStrategySummarizePrimitives
+	RecommendedStrategySummarizeObjects    = compressors.RecommendedStrategySummarizeObjects
+)
+
+func SmartCrushJSON(content string, cfg SmartCrushConfig) (string, error) {
+	return compressors.SmartCrushJSON(content, cfg)
+}
+
+func SmartCrushJSONWithSteps(content string, cfg SmartCrushConfig) (string, []CompressionStep, error) {
+	return compressors.SmartCrushJSONWithSteps(content, cfg)
+}
+
+func AnalyzeArray(arr []interface{}) ArrayAnalysis {
+	return compressors.AnalyzeArray(arr)
+}
+
+func BuildCompressionPlan(analysis ArrayAnalysis, cfg SmartCrushConfig) CompressionPlan {
+	return compressors.BuildCompressionPlan(analysis, cfg)
+}
+
+func CompressCode(content string, cfg CodeConfig) string {
+	return compressors.CompressCode(content, cfg)
+}
+
+func CompressText(content string, cfg TextConfig) string {
+	return compressors.CompressText(content, cfg)
+}
+
+func lineIndent(s string) int {
+	n := 0
+	for _, r := range s {
+		if r == ' ' {
+			n++
+		} else if r == '\t' {
+			n += 4
+		} else {
+			break
+		}
+	}
 	return n
 }
 
-func countTokens(tokenizer Tokenizer, content string) (int, error) {
-	if tokenizer == nil {
-		tokenizer = FallbackTokenizer{}
-	}
-	return tokenizer.Count(content)
+func NewCompressorFunc(kind ContentKind, fn func(string, Options) (string, error)) CompressorFunc {
+	return compressors.NewCompressorFunc(kind, fn)
+}
+
+func NewCompressorRegistry() *CompressorRegistry {
+	return compressors.NewCompressorRegistry()
+}
+
+func DefaultCompressorRegistry() *CompressorRegistry {
+	return compressors.DefaultCompressorRegistry()
 }

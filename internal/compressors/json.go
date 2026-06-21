@@ -1,4 +1,4 @@
-package headroom
+package compressors
 
 import (
 	"encoding/json"

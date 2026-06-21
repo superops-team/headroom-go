@@ -1,4 +1,4 @@
-package headroom
+package tokenizer
 
 import "testing"
 
@@ -40,9 +40,7 @@ func TestTokenizerFactoryFallbackWarning(t *testing.T) {
 }
 
 func TestCompressTokenizerNoFallbackReturnsError(t *testing.T) {
-	opts := DefaultOptions()
-	opts.TokenizerConfig = TokenizerConfig{Backend: TokenizerBackend("missing"), AllowFallback: false}
-	_, err := Compress([]Message{{Role: "user", Content: "hello world"}}, opts)
+	_, _, err := NewTokenizer(TokenizerConfig{Backend: TokenizerBackend("missing"), AllowFallback: false})
 	if err == nil || err.Error() != "unknown tokenizer backend" {
 		t.Fatalf("expected tokenizer construction error, got %v", err)
 	}

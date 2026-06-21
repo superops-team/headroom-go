@@ -2,6 +2,27 @@
 
 All notable changes to this project will be documented in this file.
 
+## [v0.5.0] - 2026-06-21
+
+### Changed
+
+- **项目结构规范化**：按 Go 社区标准将实现代码迁移到 `internal/` 子包
+  - `internal/compressors/` — SmartCrusher、Code、Text、专用变换、CompressorRegistry
+  - `internal/engine/` — CompressionEngine、Pipeline、Policy
+  - `internal/router/` — ContentRouter 内容类型检测
+  - `internal/tokenizer/` — Tokenizer 接口 + tiktoken/HuggingFace 后端
+  - `internal/ccr/` — 可逆压缩存储
+  - `internal/cachealigner/` — KV Cache 前缀对齐
+  - `internal/tagprotector/` — XML Tag 保护
+  - `internal/types/` — 共享类型定义（ContentKind、Observer、Warning）
+- 根包精简为公共 API 层：`Message`、`Options`、`Result`、`Compress()`、`CompressString()`
+- 通过类型别名和兼容 shim 保持 100% 向后兼容
+- 版本号升级至 v0.5.0
+
+### Fixed
+
+- 修复 `internal/ccr/ccr.go` 编译错误（`Legacytypes` typo → `LegacyCCRIDVersion`）
+
 ## [v0.4.3] - 2026-06-21
 
 ### Changed

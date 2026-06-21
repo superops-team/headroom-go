@@ -1,85 +1,18 @@
-package headroom
+package engine
 
 import (
 	"bytes"
 	"encoding/json"
 	"fmt"
 	"strings"
+
+	"github.com/superops-team/headroom-go/internal/cachealigner"
+	"github.com/superops-team/headroom-go/internal/compressors"
+	"github.com/superops-team/headroom-go/internal/tagprotector"
+	"github.com/superops-team/headroom-go/internal/tokenizer"
 )
 
-type TransformErrorKind string
-
-const (
-	TransformErrorInvalidInput TransformErrorKind = "invalid_input"
-	TransformErrorSkipped      TransformErrorKind = "skipped"
-	TransformErrorInternal     TransformErrorKind = "internal"
-)
-
-type TransformError struct {
-	Kind      TransformErrorKind
-	Transform string
-	Message   string
-	Cause     error
-}
-
-func (e TransformError) Error() string {
-	if e.Transform == "" {
-		if e.Cause != nil {
-			return string(e.Kind) + ": " + e.Message + ": " + e.Cause.Error()
-		}
-		return string(e.Kind) + ": " + e.Message
-	}
-	if e.Cause != nil {
-		return e.Transform + " " + string(e.Kind) + ": " + e.Message + ": " + e.Cause.Error()
-	}
-	return e.Transform + " " + string(e.Kind) + ": " + e.Message
-}
-
-func (e TransformError) Unwrap() error { return e.Cause }
-
-func NewTransformError(kind TransformErrorKind, transform, message string, cause error) TransformError {
-	return TransformError{Kind: kind, Transform: transform, Message: message, Cause: cause}
-}
-
-type ReformatOutput struct {
-	Output     string
-	BytesSaved int
-	Warnings   []Warning
-	Steps      []CompressionStep
-}
-
-type OffloadOutput struct {
-	Output     string
-	BytesSaved int
-	CacheKey   string
-	Warnings   []Warning
-	Steps      []CompressionStep
-}
-
-type ReformatTransform interface {
-	Name() string
-	AppliesTo() []ContentKind
-	Apply(content string, ctx CompressionContext) (ReformatOutput, error)
-}
-
-type OffloadTransform interface {
-	Name() string
-	AppliesTo() []ContentKind
-	EstimateBloat(content string, ctx CompressionContext) float64
-	Apply(content string, ctx CompressionContext) (OffloadOutput, error)
-	Confidence() float64
-}
-
-type PipelineResult struct {
-	Output       string
-	BytesSaved   int
-	TokensBefore int
-	TokensAfter  int
-	StepsApplied []string
-	CacheKeys    []string
-	Warnings     []Warning
-	Steps        []CompressionStep
-}
+const PrefixVersion = "v0.4"
 
 type Pipeline struct {
 	reformats []ReformatTransform
@@ -87,7 +20,7 @@ type Pipeline struct {
 }
 
 func NewDefaultPipeline() *Pipeline {
-	return &Pipeline{reformats: []ReformatTransform{legacyTextTransform{}, legacyCodeTransform{}, jsonMinifierTransform{}, logTemplateTransform{}, htmlCleanTransform{}}, offloads: []OffloadTransform{diffOffloadTransform{}, logOffloadTransform{}, searchOffloadTransform{}, jsonOffloadTransform{}}}
+	return &Pipeline{reformats: []ReformatTransform{legacyTextTransform{}, legacyCodeTransform{}, jsonMinifierTransform{}, compressors.NewLogTemplateTransform(), compressors.NewHTMLCleanTransform()}, offloads: []OffloadTransform{compressors.NewDiffOffloadTransform(), compressors.NewLogOffloadTransform(), compressors.NewSearchOffloadTransform(), jsonOffloadTransform{}}}
 }
 
 func (p *Pipeline) Run(content string, ctx CompressionContext, policy CompressionPolicy) PipelineResult {
@@ -160,12 +93,12 @@ func (p *Pipeline) Run(content string, ctx CompressionContext, policy Compressio
 	return result
 }
 
-func countTokensForPipeline(tokenizer Tokenizer, content, phase string) (int, *Warning) {
-	count, err := countTokens(tokenizer, content)
+func countTokensForPipeline(tok Tokenizer, content, phase string) (int, *Warning) {
+	count, err := countTokens(tok, content)
 	if err == nil {
 		return count, nil
 	}
-	fallbackCount, fallbackErr := FallbackTokenizer{}.Count(content)
+	fallbackCount, fallbackErr := tokenizer.FallbackTokenizer{}.Count(content)
 	message := err.Error()
 	if fallbackErr != nil {
 		message += "; fallback count failed: " + fallbackErr.Error()
@@ -181,7 +114,7 @@ func runPipelineMessages(messages []Message, opts Options, e *CompressionEngine)
 	steps := []CompressionStep{}
 	origTokens := 0
 	compTokens := 0
-	protector := NewTagProtector()
+	protector := tagprotector.NewTagProtector()
 	for _, m := range messages {
 		msgTokens, err := countTokens(e.tokenizer, m.Content)
 		if err != nil {
@@ -204,7 +137,7 @@ func runPipelineMessages(messages []Message, opts Options, e *CompressionEngine)
 		steps = append(steps, pr.Steps...)
 		outLen := len(restored)
 		if opts.AlignPrefix {
-			restored = NewCacheAligner(CacheAlignerConfig{Enabled: true, Version: PrefixVersion}).Align(restored)
+			restored = cachealigner.NewCacheAligner(cachealigner.CacheAlignerConfig{Enabled: true, Version: PrefixVersion}).Align(restored)
 			outLen = len(restored)
 		}
 		if opts.Reversible && restored != m.Content && e.ccr != nil {
@@ -244,7 +177,7 @@ type legacyTextTransform struct{}
 func (legacyTextTransform) Name() string             { return "legacy_text" }
 func (legacyTextTransform) AppliesTo() []ContentKind { return []ContentKind{KindText} }
 func (legacyTextTransform) Apply(content string, ctx CompressionContext) (ReformatOutput, error) {
-	out := CompressText(content, TextConfig{Aggressiveness: ctx.Aggressiveness})
+	out := compressors.CompressText(content, compressors.TextConfig{Aggressiveness: ctx.Aggressiveness})
 	return ReformatOutput{Output: out, BytesSaved: len(content) - len(out), Steps: []CompressionStep{{Name: "legacy_text", Kind: ctx.ContentKind.String()}}}, nil
 }
 
@@ -253,7 +186,7 @@ type legacyCodeTransform struct{}
 func (legacyCodeTransform) Name() string             { return "legacy_code" }
 func (legacyCodeTransform) AppliesTo() []ContentKind { return []ContentKind{KindCode} }
 func (legacyCodeTransform) Apply(content string, ctx CompressionContext) (ReformatOutput, error) {
-	out := CompressCode(content, CodeConfig{Aggressiveness: ctx.Aggressiveness})
+	out := compressors.CompressCode(content, compressors.CodeConfig{Aggressiveness: ctx.Aggressiveness})
 	return ReformatOutput{Output: out, BytesSaved: len(content) - len(out), Steps: []CompressionStep{{Name: "legacy_code", Kind: ctx.ContentKind.String()}}}, nil
 }
 
@@ -272,6 +205,8 @@ func (jsonMinifierTransform) Apply(content string, ctx CompressionContext) (Refo
 
 type jsonOffloadTransform struct{}
 
+func NewJSONOffloadTransform() OffloadTransform { return jsonOffloadTransform{} }
+
 func (jsonOffloadTransform) Name() string             { return "json_offload" }
 func (jsonOffloadTransform) AppliesTo() []ContentKind { return []ContentKind{KindJSON} }
 func (jsonOffloadTransform) EstimateBloat(content string, ctx CompressionContext) float64 {
@@ -282,7 +217,7 @@ func (jsonOffloadTransform) EstimateBloat(content string, ctx CompressionContext
 }
 func (jsonOffloadTransform) Confidence() float64 { return 0.7 }
 func (jsonOffloadTransform) Apply(content string, ctx CompressionContext) (OffloadOutput, error) {
-	crushed, steps, err := SmartCrushJSONWithSteps(content, SmartCrushConfig{Aggressiveness: ctx.Aggressiveness})
+	crushed, steps, err := compressors.SmartCrushJSONWithSteps(content, compressors.SmartCrushConfig{Aggressiveness: ctx.Aggressiveness})
 	if err != nil {
 		return OffloadOutput{}, NewTransformError(TransformErrorInternal, "json_offload", "smart crusher failed", err)
 	}
@@ -299,4 +234,20 @@ func warningFromTransformError(component string, err error) Warning {
 		return Warning{Code: "transform_error_" + string(te.Kind), Component: component, Message: te.Error()}
 	}
 	return Warning{Code: "transform_error", Component: component, Message: fmt.Sprint(err)}
+}
+
+type htmlCleanTransform struct{}
+
+func (htmlCleanTransform) Name() string             { return "html_clean" }
+func (htmlCleanTransform) AppliesTo() []ContentKind { return []ContentKind{KindHTML} }
+func (htmlCleanTransform) Apply(content string, ctx CompressionContext) (ReformatOutput, error) {
+	return compressors.NewHTMLCleanTransform().Apply(content, ctx)
+}
+
+func removeHTMLBlock(s, tag string) string {
+	return compressors.RemoveHTMLBlock(s, tag)
+}
+
+func removeHTMLComments(s string) string {
+	return compressors.RemoveHTMLComments(s)
 }
