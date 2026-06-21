@@ -9,7 +9,7 @@
   <a href="https://goreportcard.com/report/github.com/superops-team/headroom-go"><img src="https://goreportcard.com/badge/github.com/superops-team/headroom-go" alt="Go Report Card"></a>
   <a href="https://github.com/superops-team/headroom-go"><img src="https://img.shields.io/badge/coverage-92.8%25-brightgreen" alt="Coverage"></a>
   <a href="https://github.com/superops-team/headroom-go"><img src="https://img.shields.io/badge/tests-140%20passing-brightgreen" alt="Tests"></a>
-  <a href="https://github.com/superops-team/headroom-go/releases/tag/v0.5.0"><img src="https://img.shields.io/badge/version-v0.5.0-blue" alt="Release"></a>
+  <a href="https://github.com/superops-team/headroom-go/releases/tag/v0.5.1"><img src="https://img.shields.io/badge/version-v0.5.1-blue" alt="Release"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License"></a>
   <a href="https://pkg.go.dev/github.com/superops-team/headroom-go"><img src="https://pkg.go.dev/badge/github.com/superops-team/headroom-go.svg" alt="Go Reference"></a>
 </p>
@@ -30,7 +30,7 @@
 - [🌐 HTTP Proxy Guide](#-http-proxy-guide)
 - [🔤 Tokenizer Guide](#-tokenizer-guide)
 - [🔄 Pipeline Mode](#-pipeline-mode)
-- [🔙 Reversible Compression 详解](#-reversible-compression-详解)
+- [🔙 Reversible Compression in Detail](#-reversible-compression-in-detail)
 - [🔌 Custom Compressor](#-custom-compressor)
 - [📊 Observability](#-observability)
 - [📊 Real-World Performance](#-real-world-performance)
@@ -100,8 +100,8 @@ curl -sSL https://raw.githubusercontent.com/superops-team/headroom-go/main/insta
 - **No package manager requirement**: downloads with `curl` or `wget`, installs to `/usr/local/bin/headroom`.
 
 ```bash
-# Install exactly v0.5.0 instead of latest.
-curl -sSL https://raw.githubusercontent.com/superops-team/headroom-go/main/install.sh | bash -s -- v0.5.0
+# Install exactly v0.5.1 instead of latest.
+curl -sSL https://raw.githubusercontent.com/superops-team/headroom-go/main/install.sh | bash -s -- v0.5.1
 
 # Verify.
 headroom version
@@ -110,7 +110,7 @@ headroom version
 Or with Go:
 
 ```bash
-go install github.com/superops-team/headroom-go/cmd/headroom@v0.5.0
+go install github.com/superops-team/headroom-go/cmd/headroom@v0.5.1
 ```
 
 ### Compress in 5 Seconds
@@ -167,18 +167,18 @@ headroom <command> [flags]
 
 Compress stdin or an input file and write to stdout or an output file.
 
-| Flag | 类型 | 默认值 | 说明 |
+| Flag | Type | Default | Description |
 |------|------|--------|------|
-| `--aggressiveness` | float | `0.5` | 压缩强度 `0.0-1.0` |
-| `--no-reversible` | bool | `false` | 关闭可逆压缩 |
-| `--no-align` | bool | `false` | 关闭前缀对齐 |
+| `--aggressiveness` | float | `0.5` | Compression strength `0.0-1.0` |
+| `--no-reversible` | bool | `false` | Disable reversible compression |
+| `--no-align` | bool | `false` | Disable prefix alignment |
 | `--tokenizer-backend` | string | `""` | `fallback` / `tiktoken` / `huggingface` |
-| `--token-budget` | int | `0` | 目标 token budget |
-| `--enable-pipeline` | bool | `false` | 启用 Pipeline 模式 |
-| `--query` | string | `""` | diff/search scoring 查询词 |
-| `--input` | string | `""` | 输入文件（默认 stdin） |
-| `--output` | string | `""` | 输出文件（默认 stdout） |
-| `--stats` | bool | `false` | 打印 token 统计 |
+| `--token-budget` | int | `0` | Target token budget |
+| `--enable-pipeline` | bool | `false` | Enable Pipeline mode |
+| `--query` | string | `""` | Query for diff/search scoring |
+| `--input` | string | `""` | Input file (default stdin) |
+| `--output` | string | `""` | Output file (default stdout) |
+| `--stats` | bool | `false` | Print token stats |
 
 ```bash
 # stdin → stdout, stats → stderr.
@@ -197,20 +197,20 @@ headroom compress \
 
 Start an OpenAI-compatible HTTP proxy.
 
-| Flag | 类型 | 默认值 | 说明 |
+| Flag | Type | Default | Description |
 |------|------|--------|------|
-| `--port` | int | `8787` | 监听端口 |
-| `--upstream` | string | `https://api.openai.com/v1` | 上游 Base URL |
-| `--aggressiveness` | float | `0.5` | 压缩强度 |
-| `--no-reversible` | bool | `false` | 关闭可逆压缩 |
-| `--enable-pipeline` | bool | `false` | 启用 Pipeline 模式 |
-| `--token-budget` | int | `0` | 目标 token budget |
+| `--port` | int | `8787` | Listen port |
+| `--upstream` | string | `https://api.openai.com/v1` | Upstream base URL |
+| `--aggressiveness` | float | `0.5` | Compression strength |
+| `--no-reversible` | bool | `false` | Disable reversible compression |
+| `--enable-pipeline` | bool | `false` | Enable Pipeline mode |
+| `--token-budget` | int | `0` | Target token budget |
 
 Environment variable:
 
-| Name | 说明 |
+| Name | Description |
 |------|------|
-| `HEADROOM_API_KEY` | 当客户端请求没有 `Authorization` header 时，用作上游 Bearer token |
+| `HEADROOM_API_KEY` | When client request has no `Authorization` header, use as upstream Bearer token |
 
 ```bash
 # Default OpenAI upstream on :8787.
@@ -230,7 +230,7 @@ Print the version number.
 
 ```bash
 headroom version
-# headroom-go v0.5.0
+# headroom-go v0.5.1
 ```
 
 ---
@@ -287,11 +287,11 @@ func main() {
 
 OpenAI-compatible chat message.
 
-| Field | Type | 说明 |
+| Field | Type | Description |
 |------|------|------|
-| `Role` | string | `system` / `user` / `assistant` / `tool` 等 |
-| `Content` | string | 待压缩内容 |
-| `Name` | string | 可选 name，JSON 中 `omitempty` |
+| `Role` | string | `system` / `user` / `assistant` / `tool` |
+| `Content` | string | Content to compress |
+| `Name` | string | Optional name, `omitempty` in JSON |
 
 ```go
 msg := headroom.Message{Role: "user", Content: "long context", Name: "retriever"}
@@ -300,17 +300,17 @@ fmt.Println(msg.Role, msg.Name)
 
 ### `Options{...}`
 
-| Field | Type | 默认值 | 说明 |
+| Field | Type | Default | Description |
 |------|------|--------|------|
-| `Aggressiveness` | float64 | `0.5` | 压缩强度，建议 `0.0-1.0` |
-| `Reversible` | bool | `true` | 启用 CCR 可逆压缩 |
-| `AlignPrefix` | bool | `false` (`compress` CLI 默认会打开，除非 `--no-align`) | 是否添加稳定前缀 |
-| `TokenLimit` | int | `0` | 消息 token 低于该值时跳过压缩 |
-| `TokenizerConfig` | `TokenizerConfig` | zero value | tokenizer 后端配置 |
-| `TokenBudget` | int | `0` | Pipeline 目标 token 数；大于 0 会走 Pipeline |
-| `Query` | string | `""` | Pipeline diff/search 查询词；非空会走 Pipeline |
-| `EnablePipeline` | bool | `false` | 强制启用 Pipeline |
-| `Observer` | `Observer` | `nil` | 压缩步骤回调；engine 内部会使用 no-op observer |
+| `Aggressiveness` | float64 | `0.5` | Compression strength，recommended `0.0-1.0` |
+| `Reversible` | bool | `true` | Enable CCR reversible compression |
+| `AlignPrefix` | bool | `false` (`compress` CLI enabled by default unless `--no-align`) | Add stable prefix for KV cache |
+| `TokenLimit` | int | `0` | Skip compression when message tokens below this value |
+| `TokenizerConfig` | `TokenizerConfig` | zero value | Tokenizer backend configuration |
+| `TokenBudget` | int | `0` | Pipeline target token count; >0 enables Pipeline |
+| `Query` | string | `""` | Pipeline diff/search query; non-empty enables Pipeline |
+| `EnablePipeline` | bool | `false` | Force enable Pipeline |
+| `Observer` | `Observer` | `nil` | Compression step callback; engine uses no-op observer internally |
 
 ```go
 opts := headroom.Options{
@@ -331,14 +331,14 @@ fmt.Printf("%+v\n", opts)
 
 ### `Result{...}`
 
-| Field | Type | 说明 |
+| Field | Type | Description |
 |------|------|------|
-| `Messages` | `[]Message` | 压缩后的消息数组 |
-| `CompressedTokens` | int | 压缩后 token 数 |
-| `OriginalTokens` | int | 原始 token 数 |
-| `Savings` | float64 | 节省比例，例如 `0.68` 表示 68% |
-| `Warnings` | `[]Warning` | 非致命告警 |
-| `Steps` | `[]CompressionStep` | 压缩步骤明细 |
+| `Messages` | `[]Message` | Compressed message array |
+| `CompressedTokens` | int | Compressed token count |
+| `OriginalTokens` | int | Original token count |
+| `Savings` | float64 | Savings ratio, e.g. `0.68` means 68% |
+| `Warnings` | `[]Warning` | Non-fatal warnings |
+| `Steps` | `[]CompressionStep` | Compression step details |
 
 ```go
 res, _ := headroom.Compress([]headroom.Message{{Role: "user", Content: "INFO x\nINFO x\n"}}, headroom.Options{Reversible:false})
@@ -393,20 +393,20 @@ fmt.Println(legacy, pipeline)
 
 ### Summary
 
-| 类型 | ContentKind | 检测规则 | 压缩策略 |
+| Type | ContentKind | Detection Rule | Compression Strategy |
 |------|-------------|---------|---------|
-| JSON | `KindJSON` | `{` 或 `[` 开头 + valid JSON | 去 null/空值、折叠数组、激进模式截断浮点到 2 位 |
-| Code | `KindCode` | >=3 行含代码关键字，或 fenced code / comment+brace | 去注释/空行、折叠长函数(>20行)、保留错误处理 |
-| Text | `KindText` | 默认 | 去重行、移除 stopwords、折叠段落(>30行) |
-| Diff | `KindDiff` | `diff --git`、`@@` 头部、或 `---`/`+++` | Pipeline 折叠未变更块、保留 +/- 上下文 |
-| Log | `KindLog` | 多行包含 ERROR/WARN/FAIL/FATAL 或 `[INFO]`/`[DEBUG]` | 保留 FATAL/ERROR、折叠重复 INFO/DEBUG |
-| Search | `KindSearch` | 至少 2 行 `filename:line:` 或 `filename-line-` | 折叠重复匹配、保留文件分组 |
-| Tabular | `KindTabular` | TSV/CSV/Markdown table | 当前回落到文本压缩；保留表头倾向 |
-| Spreadsheet | `KindSpreadsheet` | API 预留类型；当前 router 不自动检测 | 当前回落到文本压缩；用于未来单元格级压缩 |
-| HTML | `KindHTML` | `<!doctype html`、`<html`、或 `<head` + `<body` | Pipeline 去注释、移除 script/style |
-| Unknown | `KindUnknown` | API 预留类型 | registry 未命中时回落到 Text |
+| JSON | `KindJSON` | Starts with `{` or `[` + valid JSON | Remove nulls/empties, fold arrays, truncate floats to 2 decimal places |
+| Code | `KindCode` | >=3 lines with code keywords, or fenced code / comment+brace | Strip comments/blank lines, fold long functions (>20 lines), preserve error handling |
+| Text | `KindText` | Default | Deduplicate lines, remove stopwords, fold paragraphs (>30 lines) |
+| Diff | `KindDiff` | `diff --git`, `@@` headers, or `---`/`+++` | Pipeline: collapse unchanged hunks, preserve +/- context |
+| Log | `KindLog` | Multiple lines with ERROR/WARN/FAIL/FATAL or `[INFO]`/`[DEBUG]` | Preserve FATAL/ERROR, fold repeated INFO/DEBUG |
+| Search | `KindSearch` | At least 2 lines of `filename:line:` or `filename-line-` | Collapse repeated matches, preserve file grouping |
+| Tabular | `KindTabular` | TSV/CSV/Markdown table | Currently falls back to text; header-preserving bias |
+| Spreadsheet | `KindSpreadsheet` | API reserved type; not auto-detected by router | Currently falls back to text；Reserved for future cell-level compression |
+| HTML | `KindHTML` | `<!doctype html`, `<html>`, or `<head` + `<body` | Pipeline: strip comments, remove script/style |
+| Unknown | `KindUnknown` | API reserved type | Falls back to Text when registry miss |
 
-> Note: `KindSpreadsheet` and `KindUnknown` are public content-kind values in v0.5.0, but the default router does not auto-detect Spreadsheet and the default registry falls back to text compression for unknown/unregistered kinds.
+> Note: `KindSpreadsheet` and `KindUnknown` are public content-kind values in v0.5.1, but the default router does not auto-detect Spreadsheet and the default registry falls back to text compression for unknown/unregistered kinds.
 
 ### JSON — `KindJSON`
 
@@ -495,12 +495,12 @@ name,status,count
 api,ok,10
 worker,error,2
 EOF
-# Current v0.5.0 default registry falls back to text compression for KindTabular.
+# Current v0.5.1 default registry falls back to text compression for KindTabular.
 ```
 
 ### Spreadsheet — `KindSpreadsheet`
 
-Detection: public kind reserved for multi-column/cell-aware data; not auto-detected by the default router in v0.5.0.
+Detection: public kind reserved for multi-column/cell-aware data; not auto-detected by the default router in v0.5.1.
 
 ```go
 registry := headroom.NewCompressorRegistry()
@@ -543,9 +543,9 @@ fmt.Println(out) // fallback:???
 
 | Range | Name | Behavior |
 |------|------|----------|
-| `0.0-0.3` | Conservative / 保守 | Minimal loss; JSON arrays often pass through |
-| `0.3-0.7` | Standard / 标准 | Balanced defaults for agent context |
-| `0.7-1.0` | Aggressive / 激进 | More lossy transforms; JSON floats become 2-decimal strings |
+| `0.0-0.3` | Conservative | Minimal loss; JSON arrays often pass through |
+| `0.3-0.7` | Standard | Balanced defaults for agent context |
+| `0.7-1.0` | Aggressive | More lossy transforms; JSON floats become 2-decimal strings |
 
 ```go
 for _, a := range []float64{0.2, 0.5, 0.8} {
@@ -678,7 +678,7 @@ HEADROOM_API_KEY="$OPENAI_API_KEY" headroom proxy --upstream https://api.openai.
 
 ```bash
 curl -s http://localhost:8787/healthz
-# {"status":"ok","version":"v0.5.0","uptime":"..."}
+# {"status":"ok","version":"v0.5.1","uptime":"..."}
 ```
 
 ### Authentication
@@ -695,14 +695,14 @@ curl -s http://localhost:8787/v1/chat/completions \
 
 ### Streaming limitation
 
-`stream:true` returns HTTP 400 in v0.5.0.
+`stream:true` returns HTTP 400 in v0.5.1.
 
 ```bash
 curl -i http://localhost:8787/v1/chat/completions \
   -H 'Content-Type: application/json' \
   -d '{"model":"gpt-4o-mini","stream":true,"messages":[{"role":"user","content":"hello"}]}'
 # HTTP/1.1 400 Bad Request
-# {"error":"streaming not supported in v0.5.0"}
+# {"error":"streaming not supported in v0.5.1"}
 ```
 
 ### Request ID
@@ -749,13 +749,13 @@ pkill -TERM headroom
 
 ## 🔤 Tokenizer Guide
 
-| 后端 | 值 | 精度 | 依赖 | 适用场景 |
+| Backend | Value | Precision | Dependency | Use Case |
 |------|-----|------|------|---------|
-| Fallback | `fallback` | 粗略（pure-Go rune/word counting） | 零依赖 | 默认，通用场景 |
-| tiktoken | `tiktoken` | 预留精确后端；v0.5.0 stub | 零外部依赖；可 fallback | OpenAI 模型规划 |
-| HuggingFace | `huggingface` | 预留精确后端；v0.5.0 stub | 零外部依赖；可 fallback | 开源模型规划 |
+| Fallback | `fallback` | Approximate (pure-Go rune/word counting) | Zero dependencies | Default, general purpose |
+| tiktoken | `tiktoken` | Reserved precise backend; v0.5.1 stub | Zero external deps; can fallback | Planned for OpenAI models |
+| HuggingFace | `huggingface` | Reserved precise backend; v0.5.1 stub | Zero external deps; can fallback | Planned for open-source models |
 
-Headroom Go remains **zero external dependencies** in v0.5.0. Non-fallback tokenizer backends currently return a warning and fall back when `AllowFallback=true`.
+Headroom Go remains **zero external dependencies** in v0.5.1. Non-fallback tokenizer backends currently return a warning and fall back when `AllowFallback=true`.
 
 ```go
 tok, warnings, err := headroom.NewTokenizer(headroom.TokenizerConfig{
@@ -824,14 +824,14 @@ _, _ = headroom.CompressString("INFO ok\nINFO ok\n", headroom.Options{
 
 ---
 
-## 🔙 Reversible Compression 详解
+## 🔙 Reversible Compression in Detail
 
 CCR (Context Compression Retrieval) stores original content in memory and appends a retrieval marker to compressed output when `Options.Reversible=true`.
 
-Runtime behavior in v0.5.0:
+Runtime behavior in v0.5.1:
 
 - `Store(original, compressed, kind)` returns a deterministic ID.
-- Actual ID format emitted by `Store`: `v2_{sha256前12字符}`.
+- Actual ID format emitted by `Store`: `v2_{sha256[:12]}`.
 - `CCRIDVersion = "v3"` exists as a public version constant, but the runtime store currently uses `LegacyCCRIDVersion = "v2"` for compatibility.
 - TTL default: `24h`.
 - MaxEntries default: `10000`.
@@ -1075,8 +1075,8 @@ ENTRYPOINT ["/headroom", "proxy", "--port", "8787"]
 ```
 
 ```bash
-docker build -t headroom-go:v0.5.0 .
-docker run --rm -p 8787:8787 -e HEADROOM_API_KEY="$OPENAI_API_KEY" headroom-go:v0.5.0
+docker build -t headroom-go:v0.5.1 .
+docker run --rm -p 8787:8787 -e HEADROOM_API_KEY="$OPENAI_API_KEY" headroom-go:v0.5.1
 ```
 
 ### Production recommendations
@@ -1091,7 +1091,7 @@ docker run --rm -p 8787:8787 -e HEADROOM_API_KEY="$OPENAI_API_KEY" headroom-go:v
 
 ## 🔍 Troubleshooting
 
-### 压缩后内容比原文长？
+### Compressed output longer than input?
 
 Headroom intentionally falls back to the original if output bytes are not shorter. This can happen with tiny inputs or when reversible CCR metadata would be larger than the savings.
 
@@ -1099,9 +1099,9 @@ Headroom intentionally falls back to the original if output bytes are not shorte
 echo short | headroom compress --stats
 ```
 
-### 流式请求报错？
+### Streaming request error?
 
-`stream:true` is not supported in v0.5.0 and returns 400.
+`stream:true` is not supported in v0.5.1 and returns 400.
 
 ```bash
 curl -i http://localhost:8787/v1/chat/completions \
@@ -1109,7 +1109,7 @@ curl -i http://localhost:8787/v1/chat/completions \
   -d '{"stream":true,"messages":[{"role":"user","content":"hello"}]}'
 ```
 
-### CCR 检索返回 false？
+### CCR Retrieve returns false?
 
 Common causes: ID not stored in this process, TTL expired, entry was evicted by `MaxEntries`, or the process restarted because CCR is in-memory.
 
@@ -1121,16 +1121,16 @@ _, ok := store.Retrieve(id)
 fmt.Println(ok) // false
 ```
 
-### 端口被占用？
+### Port already in use?
 
 ```bash
 headroom proxy --port 9876
 curl -s http://localhost:9876/healthz
 ```
 
-### Token 估算不准？
+### Token estimates inaccurate?
 
-The default fallback tokenizer is approximate and dependency-free. `tiktoken` and `huggingface` are reserved backends in v0.5.0 and fall back when `AllowFallback=true`.
+The default fallback tokenizer is approximate and dependency-free. `tiktoken` and `huggingface` are reserved backends in v0.5.1 and fall back when `AllowFallback=true`.
 
 ```bash
 echo 'hello world' | headroom compress --tokenizer-backend fallback --stats --no-reversible
