@@ -1,0 +1,150 @@
+# headroom-go
+
+> Intelligent Context Compression for the AI Agent Era — single binary, zero dependencies, up to 70% token savings.
+
+## Overview
+
+headroom-go is a Go library and CLI tool that compresses everything an AI agent reads (tool outputs, logs, RAG snippets, code diffs, search results, conversation history) before sending to an LLM. It auto-detects 10 content types and applies specialized compression strategies. Can be used as a Go library, a CLI pipe, or a transparent OpenAI-compatible HTTP proxy.
+
+## Quick Start
+
+```bash
+go get github.com/superops-team/headroom-go
+```
+
+```go
+import headroom "github.com/superops-team/headroom-go"
+
+result, _ := headroom.Compress(messages, headroom.Options{
+    Aggressiveness: 0.5,
+    Reversible:     true,
+})
+fmt.Printf("Saved %.0f%% tokens\n", result.Savings*100)
+```
+
+CLI:
+```bash
+cat huge_log.txt | headroom compress --stats
+headroom proxy --port 8080
+```
+
+## Key Concepts
+
+- **ContentKind**: Enum identifying content type (JSON=1, Code=2, Text=0, Diff=3, Log=4, Search=5, Tabular=6, Spreadsheet=7, HTML=8, Unknown=9)
+- **Compressor**: Interface with `Compress(content, cfg) (string, error)` and `Kind() ContentKind` — pluggable compression strategies
+- **CompressorRegistry**: Map of ContentKind → Compressor, supports custom registration
+- **CCR (Compress-Cache-Retrieve)**: Reversible compression — store originals, retrieve by ID (format: `v3_{sha256[:12]}`)
+- **CacheAligner**: Prefixes output with `[headroom/v0.5]` for provider-side KV cache hit rate improvement
+- **TagProtector**: Preserves XML tags (`<thinking>`, `<tool_call>`, etc.) from being mangled by compression
+- **Pipeline**: Policy-driven compression path with TokenBudget, Query scoring, Observer hooks
+- **Legacy Path**: Simple, fast compression path (default) — router → compressor → aligner → CCR
+
+## API Reference
+
+### Core Functions
+
+- `Compress(messages []Message, opts Options) (*Result, error)` — Compress a batch of chat messages. Assistant role messages are passed through unchanged. Tool role messages are treated as user messages.
+- `CompressString(content string, opts Options) (string, error)` — Compress a single text string. Convenience wrapper around Compress.
+- `DefaultOptions() Options` — Returns recommended defaults: Aggressiveness=0.5, Reversible=true, AlignPrefix=false, TokenLimit=0.
+
+### Core Types
+
+- `Message{Role, Content, Name}` — OpenAI-compatible chat message
+- `Options{Aggressiveness, Reversible, AlignPrefix, TokenLimit, TokenizerConfig, TokenBudget, Query, EnablePipeline, Observer}` — Compression configuration
+- `Result{Messages, CompressedTokens, OriginalTokens, Savings, Warnings, Steps}` — Compression output
+- `ContentKind` — int enum: KindText=0, KindJSON=1, KindCode=2, KindDiff=3, KindLog=4, KindSearch=5, KindTabular=6, KindSpreadsheet=7, KindHTML=8, KindUnknown=9
+- `CompressionEngine` — Orchestrates compression with resolved dependencies (Pipeline or Legacy path)
+- `CompressorRegistry` — Registry mapping ContentKind to Compressor implementations
+- `CCR` — Reversible compression store: `Store(original, compressed, kind) string`, `Retrieve(id) (string, bool)`, `Stats() (int, int)`
+- `CacheAligner` — KV cache prefix alignment: `Align(content) string`
+- `TagProtector` — XML tag preservation: `Protect(content) ProtectedContent`, `Restore(pc) string`
+- `Tokenizer` — Token counting interface: `Count(s) (int, error)`, `CountBatch(ss) ([]int, error)`
+- `Observer` — Observability interface: `ObserveCompressionStep(step CompressionStep)`
+
+### CLI Commands
+
+- `headroom compress [flags]` — Compress stdin or file
+- `headroom proxy [flags]` — Start HTTP proxy (OpenAI-compatible)
+- `headroom version` — Print version
+
+### HTTP Proxy Endpoints
+
+- `POST /v1/chat/completions` — Compress messages and forward to upstream LLM API
+- `GET /healthz` — Health check: `{"status":"ok","version":"v0.5.0","uptime":"..."}`
+
+## Common Patterns
+
+### Basic Compression
+
+```go
+messages := []headroom.Message{
+    {Role: "user", Content: "What does this error mean?"},
+    {Role: "tool", Content: hugeJSONResponse},
+}
+result, _ := headroom.Compress(messages, headroom.DefaultOptions())
+// result.Messages[1].Content is now compressed
+```
+
+### Reversible Compression
+
+```go
+opts := headroom.Options{Reversible: true}
+result, _ := headroom.Compress(messages, opts)
+// Output contains: [headroom:retrieve id=v3_a1b2c3d4e5f6]
+
+ccr := headroom.NewCCR(headroom.CCRConfig{TTL: 24 * time.Hour})
+original, found := ccr.Retrieve("v3_a1b2c3d4e5f6")
+```
+
+### Custom Compressor
+
+```go
+registry := headroom.NewCompressorRegistry()
+registry.Register(headroom.NewCompressorFunc(headroom.KindText,
+    func(content string, opts headroom.Options) (string, error) {
+        return myCustomCompression(content), nil
+    },
+))
+```
+
+### Pipeline Mode
+
+```go
+opts := headroom.Options{
+    EnablePipeline: true,
+    TokenBudget:    4000,
+    Query:          "authentication error",
+    Observer:       myObserver,
+}
+result, _ := headroom.Compress(messages, opts)
+```
+
+### CLI Pipe
+
+```bash
+cat access.log | headroom compress --aggressiveness 0.8 --stats
+# → Original: 12,500 tokens | Compressed: 3,750 tokens | Savings: 70.0%
+```
+
+### HTTP Proxy
+
+```bash
+export HEADROOM_API_KEY="sk-..."
+headroom proxy --port 8080 --upstream https://api.openai.com/v1
+curl http://localhost:8080/healthz
+```
+
+## Error Handling
+
+- `Compress()` returns error on tokenizer failure or invalid configuration
+- SmartCrusher degrades gracefully: invalid JSON returns original content + nil error
+- Proxy returns HTTP 400 for streaming requests, HTTP 502 for upstream unreachable
+- CCR.Retrieve returns `("", false)` for missing/expired entries
+- Observer receives Warnings for non-fatal issues (tokenizer fallback, transform errors)
+
+## References
+
+- Repository: https://github.com/superops-team/headroom-go
+- Go Reference: https://pkg.go.dev/github.com/superops-team/headroom-go
+- Issues: https://github.com/superops-team/headroom-go/issues
+- Changelog: https://github.com/superops-team/headroom-go/blob/main/CHANGELOG.md

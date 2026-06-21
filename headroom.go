@@ -1,3 +1,34 @@
+// Package headroom provides intelligent context compression for AI agents.
+//
+// Headroom Go compresses everything an AI agent reads — tool outputs, logs,
+// RAG snippets, code diffs, search results, and conversation history — before
+// sending to an LLM. It auto-detects 10 content types and applies specialized
+// compression strategies, achieving up to 70% token savings while preserving
+// semantic accuracy.
+//
+// # Quick Start
+//
+//	result, _ := headroom.Compress(messages, headroom.Options{
+//	    Aggressiveness: 0.5,
+//	    Reversible:     true,
+//	})
+//	fmt.Printf("Saved %.0f%% tokens\n", result.Savings*100)
+//
+// # Architecture
+//
+// Headroom Go offers two compression paths:
+//
+//   - Legacy Path (default): Simple, fast — router → compressor → aligner → CCR.
+//     Best for straightforward compression without policy decisions.
+//
+//   - Pipeline Path (EnablePipeline=true): Policy-driven — analyzes content,
+//     applies token budgets, scores with query relevance, and chains multiple
+//     reformat/offload transforms. Best when you need fine-grained control.
+//
+// # Zero Dependencies
+//
+// Headroom Go uses only the Go standard library. No CGo, no third-party
+// packages, no runtime dependencies. Single binary deployment.
 package headroom
 
 import (
@@ -16,18 +47,53 @@ import (
 )
 
 // Message represents a chat message compatible with OpenAI Messages format.
+//
+// Fields:
+//   - Role: "system", "user", "assistant", or "tool"
+//   - Content: the message text
+//   - Name: optional participant name
 type Message = types.Message
 
 // Options controls compression behavior.
+//
+// Fields:
+//   - Aggressiveness: compression strength 0.0-1.0 (default 0.5).
+//     0.0-0.3 conservative, 0.3-0.7 standard, 0.7-1.0 aggressive.
+//   - Reversible: if true, original content is cached and a retrieval ID
+//     is appended to the output (default true).
+//   - AlignPrefix: if true, prefixes output with [headroom/version] for
+//     better provider-side KV cache hit rates (default false).
+//   - TokenLimit: skip compression for messages with fewer tokens than
+//     this threshold. 0 means always compress (default 0).
+//   - TokenizerConfig: configures the tokenizer backend.
+//   - TokenBudget: target token count for Pipeline mode (0 = unlimited).
+//   - Query: search/diff relevance scoring query for Pipeline mode.
+//   - EnablePipeline: use the policy-driven Pipeline path instead of Legacy.
+//   - Observer: receives compression step notifications.
 type Options = types.Options
 
 // Result is the output of Compress.
+//
+// Fields:
+//   - Messages: the compressed message array.
+//   - CompressedTokens: estimated token count after compression.
+//   - OriginalTokens: estimated token count before compression.
+//   - Savings: token savings ratio (OriginalTokens-CompressedTokens)/OriginalTokens.
+//   - Warnings: non-fatal warnings encountered during compression.
+//   - Steps: detailed per-message compression steps for observability.
 type Result = types.Result
 
 // CompressionEngine compresses message batches with resolved dependencies.
+// Created via NewCompressionEngine(opts).
 type CompressionEngine = eng.CompressionEngine
+
+// CompressionContext carries per-compression metadata for Pipeline transforms.
 type CompressionContext = types.CompressionContext
+
+// TransformError represents an error from a Pipeline transform step.
 type TransformError = types.TransformError
+
+// ReformatTransform is a Pipeline transform that rewrites content in-place.
 type ReformatTransform = types.ReformatTransform
 
 type Pipeline struct {
@@ -39,6 +105,13 @@ const (
 	TransformErrorInternal = types.TransformErrorInternal
 )
 
+// DefaultOptions returns the recommended default compression options.
+//
+// Defaults:
+//   - Aggressiveness: 0.5 (standard)
+//   - Reversible: true
+//   - AlignPrefix: false
+//   - TokenLimit: 0 (always compress)
 func DefaultOptions() Options {
 	return Options{
 		Aggressiveness: 0.5,
@@ -48,23 +121,63 @@ func DefaultOptions() Options {
 	}
 }
 
+// NewCompressionEngine creates a new CompressionEngine with the given options.
+// The engine resolves tokenizer, CCR store, and pipeline dependencies.
+// Returns the engine and any non-fatal warnings from dependency resolution.
 func NewCompressionEngine(opts Options) (*CompressionEngine, []Warning) {
 	return eng.NewCompressionEngine(opts)
 }
 
+// DefaultCompressionPolicy returns a Pipeline policy based on aggressiveness.
+//
+// Mapping:
+//   - 0.0-0.3 → PolicyConservative
+//   - 0.3-0.7 → PolicyStandard
+//   - 0.7-1.0 → PolicyAggressive
 func DefaultCompressionPolicy(aggressiveness float64) types.CompressionPolicy {
 	return types.DefaultCompressionPolicy(aggressiveness)
 }
 
+// NewTransformError creates a TransformError for Pipeline transform failures.
+//
+// Parameters:
+//   - kind: error category (TransformErrorInvalidInput, TransformErrorSkipped, TransformErrorInternal)
+//   - transform: name of the transform that failed
+//   - message: human-readable error description
+//   - cause: underlying error (can be nil)
 func NewTransformError(kind types.TransformErrorKind, transform, message string, cause error) TransformError {
 	return types.NewTransformError(kind, transform, message, cause)
 }
 
+// NewDefaultPipeline creates a Pipeline pre-configured with all built-in transforms.
+//
+// Reformats (in-place): legacy_text, legacy_code, json_minifier, log_template, html_clean.
+// Offloads (cache-and-replace): diff, log, search, json.
 func NewDefaultPipeline() *Pipeline {
 	return &Pipeline{reformats: []ReformatTransform{legacyTextTransform{}, legacyCodeTransform{}, jsonMinifierTransform{}, compressors.NewLogTemplateTransform(), compressors.NewHTMLCleanTransform()}, offloads: []types.OffloadTransform{compressors.NewDiffOffloadTransform(), compressors.NewLogOffloadTransform(), compressors.NewSearchOffloadTransform(), jsonOffloadTransform{}}}
 }
 
 // Compress compresses a batch of chat messages.
+//
+// Assistant role messages are passed through unchanged. Tool role messages
+// are treated as user messages and compressed. The compression path is
+// chosen automatically: Legacy path by default, Pipeline path when
+// opts.EnablePipeline is true.
+//
+// Returns ErrTokenizerNotImplemented if the configured tokenizer backend
+// is unavailable and AllowFallback is false.
+//
+// Example:
+//
+//	messages := []headroom.Message{
+//	    {Role: "user", Content: "What does this error mean?"},
+//	    {Role: "tool", Content: hugeJSONResponse},
+//	}
+//	result, err := headroom.Compress(messages, headroom.DefaultOptions())
+//	if err != nil {
+//	    log.Fatal(err)
+//	}
+//	fmt.Printf("Saved %.0f%% tokens\n", result.Savings*100)
 func Compress(messages []Message, opts Options) (*Result, error) {
 	engine, warnings := NewCompressionEngine(opts)
 	result, err := engine.Compress(messages, opts)
@@ -74,7 +187,18 @@ func Compress(messages []Message, opts Options) (*Result, error) {
 	return result, err
 }
 
-// CompressString compresses a single text input.
+// CompressString compresses a single text string.
+//
+// Convenience wrapper around Compress. Wraps the content in a user-role
+// message, compresses it, and returns the compressed text.
+//
+// Example:
+//
+//	compressed, err := headroom.CompressString(hugeLogContent, headroom.DefaultOptions())
+//	if err != nil {
+//	    log.Fatal(err)
+//	}
+//	fmt.Println(compressed)
 func CompressString(content string, opts Options) (string, error) {
 	r, err := Compress([]Message{{Role: "user", Content: content}}, opts)
 	if err != nil {
