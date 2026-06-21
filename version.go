@@ -4,7 +4,7 @@ package headroom
 // Used by CLI (headroom version) and proxy (/healthz).
 const (
 	// Version is the full semantic version string.
-	Version = "v0.5.0"
+	Version = "v0.5.1"
 
 	// PrefixVersion is the cache alignment prefix version.
 	// Increment when compression algorithm changes would alter output.
