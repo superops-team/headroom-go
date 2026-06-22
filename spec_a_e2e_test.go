@@ -182,7 +182,7 @@ func TestSpecAE2EBoundaryAndErrorScenarios(t *testing.T) {
 	})
 
 	t.Run("invalid input and unsupported content kind degrade safely", func(t *testing.T) {
-		pipeline := &Pipeline{reformats: []ReformatTransform{jsonMinifierTransform{}}, offloads: nil}
+		pipeline := NewDefaultPipeline()
 		pr := pipeline.Run(`{"a":1,}`, CompressionContext{ContentKind: KindJSON, Tokenizer: FallbackTokenizer{}, Aggressiveness: 0.5}, DefaultCompressionPolicy(0.5))
 		if pr.Output != `{"a":1,}` || len(pr.Warnings) == 0 || pr.Warnings[0].Code != "transform_error_invalid_input" {
 			t.Fatalf("invalid JSON should warn and keep input, got output=%q warnings=%#v", pr.Output, pr.Warnings)
@@ -202,7 +202,7 @@ func TestSpecAE2EBoundaryAndErrorScenarios(t *testing.T) {
 	})
 
 	t.Run("tokenizer error downgrade and hard failure", func(t *testing.T) {
-		pipeline := &Pipeline{}
+		pipeline := NewDefaultPipeline()
 		pr := pipeline.Run("hello world", CompressionContext{ContentKind: KindText, Tokenizer: errorTokenizer{}, Aggressiveness: 0.5}, DefaultCompressionPolicy(0.5))
 		if pr.TokensBefore != 2 || len(pr.Warnings) == 0 || pr.Warnings[0].Code != "tokenizer_count_error" {
 			t.Fatalf("pipeline tokenizer fallback mismatch: %#v", pr)

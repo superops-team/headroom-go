@@ -2,6 +2,23 @@
 
 All notable changes to this project will be documented in this file.
 
+## [v0.6.0] - 2026-06-22
+
+### Changed
+
+- **根包文件精简**：合并 8 个 shim 文件为 `exports.go` + `compat.go`
+  - `exports.go` — 类型别名 + 常量 re-export（ContentKind/Observer/CacheAligner/CCR/ContentRouter/TagProtector/Tokenizer）
+  - `compat.go` — 历史兼容 API（SmartCrushJSON/CompressCode/CompressText/CompressorRegistry 等）
+- **headroom.go 精简**：消除与 `internal/engine/pipeline.go` 重复的 Pipeline 实现，根包 Pipeline 改为类型别名
+- **version.go 合并**：版本常量合并到 `headroom.go`
+- 根目录非测试 `.go` 文件从 12 → 5 个，总 `.go` 文件从 21 → 14 个
+- 根包测试覆盖率从 73.3% → 85.2%
+
+### Removed
+
+- 删除 8 个旧 shim 文件：`cachealigner.go`、`ccr.go`、`ccrstore.go`、`content_kind.go`、`observability.go`、`router.go`、`tag_protector.go`、`tokenizer.go`
+- 删除 `version.go`（合并到 `headroom.go`）
+
 ## [v0.5.0] - 2026-06-21
 
 ### Changed
