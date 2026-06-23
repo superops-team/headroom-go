@@ -11,12 +11,19 @@ import (
 	headroom "github.com/superops-team/headroom-go"
 )
 
-// StatsTracker 跟踪会话压缩统计。
+// StatsTracker 跟踪会话压缩统计，持有共享 CCR 实例。
 type StatsTracker struct {
-	mu                   sync.Mutex
-	totalCompressions    int64
-	totalOriginalTokens  int64
+	mu                    sync.Mutex
+	ccr                   *headroom.CCR
+	totalCompressions     int64
+	totalOriginalTokens   int64
 	totalCompressedTokens int64
+}
+
+func newStatsTracker() *StatsTracker {
+	return &StatsTracker{
+		ccr: headroom.NewCCR(headroom.CCRConfig{}),
+	}
 }
 
 func (s *StatsTracker) record(orig, comp int) {
@@ -34,14 +41,19 @@ func (s *StatsTracker) snapshot() map[string]any {
 	if s.totalOriginalTokens > 0 {
 		avg = float64(s.totalOriginalTokens-s.totalCompressedTokens) / float64(s.totalOriginalTokens) * 100
 	}
+	entries, bytes := s.ccr.Stats()
 	return map[string]any{
-		"total_compressions":     s.totalCompressions,
-		"total_original_tokens":  s.totalOriginalTokens,
+		"total_compressions":      s.totalCompressions,
+		"total_original_tokens":   s.totalOriginalTokens,
 		"total_compressed_tokens": s.totalCompressedTokens,
-		"avg_savings":            avg,
-		"cache_entries":          0,
-		"cache_bytes":            0,
+		"avg_savings":             avg,
+		"cache_entries":           entries,
+		"cache_bytes":             bytes,
 	}
+}
+
+func (s *StatsTracker) retrieve(id string) (string, bool) {
+	return s.ccr.Retrieve(id)
 }
 
 // ── 工具实现 ────────────────────────────────────────────────────────────────
@@ -51,7 +63,7 @@ func handleToolCall(params callToolParams, stats *StatsTracker) callToolResult {
 	case "headroom_compress":
 		return handleCompress(params.Arguments, stats)
 	case "headroom_retrieve":
-		return handleRetrieve(params.Arguments)
+		return handleRetrieve(params.Arguments, stats)
 	case "headroom_stats":
 		return handleStats(stats)
 	case "headroom_read":
@@ -91,7 +103,6 @@ func handleCompress(args json.RawMessage, stats *StatsTracker) callToolResult {
 		return callToolResult{Content: textContent(fmt.Sprintf("Compression failed: %v", err)), IsError: true}
 	}
 
-	// 获取统计
 	origTokens := estimateTokens(in.Content)
 	compTokens := estimateTokens(result)
 	stats.record(origTokens, compTokens)
@@ -108,7 +119,7 @@ func handleCompress(args json.RawMessage, stats *StatsTracker) callToolResult {
 	return callToolResult{Content: textContent(output)}
 }
 
-func handleRetrieve(args json.RawMessage) callToolResult {
+func handleRetrieve(args json.RawMessage, stats *StatsTracker) callToolResult {
 	var in struct {
 		RetrieveID string `json:"retrieve_id"`
 	}
@@ -119,9 +130,7 @@ func handleRetrieve(args json.RawMessage) callToolResult {
 		return callToolResult{Content: textContent("retrieve_id is required"), IsError: true}
 	}
 
-	// 通过 CCR 检索
-	store := headroom.NewCCR(headroom.CCRConfig{})
-	original, found := store.Retrieve(in.RetrieveID)
+	original, found := stats.retrieve(in.RetrieveID)
 	if !found {
 		return callToolResult{Content: textContent(fmt.Sprintf("Content not found for ID: %s", in.RetrieveID)), IsError: true}
 	}
@@ -135,6 +144,14 @@ func handleStats(stats *StatsTracker) callToolResult {
 }
 
 func handleRead(args json.RawMessage, stats *StatsTracker) callToolResult {
+	// 安全检查：仅在 HEADROOM_MCP_READ=on 时启用文件读取
+	if os.Getenv("HEADROOM_MCP_READ") != "on" {
+		return callToolResult{
+			Content: textContent("headroom_read is disabled. Set HEADROOM_MCP_READ=on to enable file reading."),
+			IsError: true,
+		}
+	}
+
 	var in struct {
 		Path string `json:"path"`
 	}
@@ -154,7 +171,6 @@ func handleRead(args json.RawMessage, stats *StatsTracker) callToolResult {
 	opts := headroom.DefaultOptions()
 	compressed, err := headroom.CompressString(content, opts)
 	if err != nil {
-		// 压缩失败时返回原始内容
 		origTokens := estimateTokens(content)
 		stats.record(origTokens, origTokens)
 		return callToolResult{Content: textContent(content)}
@@ -177,18 +193,17 @@ func handleRead(args json.RawMessage, stats *StatsTracker) callToolResult {
 }
 
 func estimateTokens(s string) int {
-	return len(strings.Fields(s)) + len(s)/4 // 粗略估计
+	return len(strings.Fields(s)) + len(s)/4
 }
 
 // ── Server ──────────────────────────────────────────────────────────────────
 
 // Serve 启动 MCP Server（stdio 模式）。
 func Serve() error {
-	stats := &StatsTracker{}
+	stats := newStatsTracker()
 	transport := newStdioTransport()
 	defer transport.Close()
 
-	// 读取 initialize 请求
 	req, err := transport.Read()
 	if err != nil {
 		return fmt.Errorf("read initialize: %w", err)
@@ -199,7 +214,6 @@ func Serve() error {
 		return fmt.Errorf("expected initialize, got %s", req.Method)
 	}
 
-	// 响应 initialize
 	initResult := initializeResult{
 		ProtocolVersion: protocolVersion,
 		ServerInfo:      serverInfo{Name: serverName, Version: serverVersion},
@@ -209,13 +223,11 @@ func Serve() error {
 	}
 	transport.Write(newResult(req.ID, initResult))
 
-	// 发送 initialized 通知
 	transport.Write(jsonRPCResponse{
 		JSONRPC: "2.0",
 		Result:  struct{}{},
 	})
 
-	// 主循环
 	for {
 		req, err := transport.Read()
 		if err != nil {
@@ -240,7 +252,6 @@ func Serve() error {
 			transport.Write(newResult(req.ID, result))
 
 		case "notifications/initialized":
-			// 忽略
 
 		default:
 			transport.Write(newError(req.ID, -32601, fmt.Sprintf("unknown method: %s", req.Method)))
@@ -274,14 +285,11 @@ func (t *stdioTransport) Write(resp jsonRPCResponse) {
 	_ = t.encoder.Encode(resp)
 }
 
-func (t *stdioTransport) Close() {
-	// stdio 无需显式关闭
-}
+func (t *stdioTransport) Close() {}
 
 // Version 返回 MCP Server 版本。
 func Version() string {
 	return serverVersion
 }
 
-// 确保 time 包被使用（StatsTracker 可能在未来用到）
 var _ = time.Now
