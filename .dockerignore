@@ -1,0 +1,10 @@
+.git/
+.hermes/
+openspec/
+testdata/
+*.test
+*.md
+!README.md
+.gitignore
+.dockerignore
+.pre-commit-config.yaml

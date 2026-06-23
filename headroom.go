@@ -46,7 +46,7 @@ import (
 // Version constants.
 const (
 	// Version is the full semantic version string.
-	Version = "v0.6.0"
+	Version = "v0.7.0"
 
 	// PrefixVersion is the cache alignment prefix version.
 	// Increment when compression algorithm changes would alter output.

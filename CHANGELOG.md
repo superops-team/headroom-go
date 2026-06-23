@@ -2,6 +2,29 @@
 
 All notable changes to this project will be documented in this file.
 
+## [v0.7.0] - 2026-06-23
+
+### Added
+
+- **MCP Server**: `headroom mcp serve` — stdio JSON-RPC MCP Server 提供 4 个工具
+  - `headroom_compress` — 压缩文本内容（自动检测 10 种内容类型）
+  - `headroom_retrieve` — 通过 ID 检索原始内容
+  - `headroom_stats` — 会话压缩统计
+  - `headroom_read` — 通过 CCR 缓存读取文件
+- **wrap 命令**: `headroom wrap <agent>` — 启动代理 + 自动配置 IDE
+  - 支持 Claude Code、Codex、Copilot CLI、Generic
+  - `--apply` 自动修改配置文件，Ctrl+C 恢复原配置
+- **CI/CD**: GitHub Actions 自动化流水线
+  - CI: build + test + race + vet + lint + security（push/PR 触发）
+  - Release: 多平台二进制构建 + 自动发布（tag 触发）
+  - Docker: 多 arch 镜像自动推送到 ghcr.io
+- **Docker 镜像**: 多阶段构建（FROM scratch），<10MB
+- **golangci-lint 配置**: `.golangci.yml`
+
+### Changed
+
+- 版本号升级至 v0.7.0
+
 ## [v0.6.0] - 2026-06-22
 
 ### Changed

@@ -15,6 +15,8 @@ import (
 	"time"
 
 	headroom "github.com/superops-team/headroom-go"
+	"github.com/superops-team/headroom-go/internal/mcp"
+	"github.com/superops-team/headroom-go/internal/wrap"
 	"github.com/superops-team/headroom-go/proxy"
 )
 
@@ -34,6 +36,10 @@ func main() {
 		runCompress(fs)
 	case "proxy":
 		runProxy(fs)
+	case "mcp":
+		runMCP(fs)
+	case "wrap":
+		runWrap(fs)
 	case "version":
 		fmt.Println("headroom-go " + headroom.Version)
 	default:
@@ -182,6 +188,48 @@ func runProxy(fs *flag.FlagSet) {
 	}
 }
 
+func runMCP(fs *flag.FlagSet) {
+	fs.Parse(os.Args[2:])
+	if fs.NArg() == 0 || fs.Arg(0) != "serve" {
+		logger.Error("mcp requires subcommand: serve")
+		fmt.Fprintf(os.Stderr, "Usage: headroom mcp serve\n")
+		os.Exit(1)
+	}
+	if err := mcp.Serve(); err != nil {
+		logger.Error("mcp server error", "err", err)
+		os.Exit(1)
+	}
+}
+
+func runWrap(fs *flag.FlagSet) {
+	agent := fs.String("agent", "", "Target agent: claude, codex, copilot, generic")
+	port := fs.Int("port", 18787, "Proxy port")
+	upstream := fs.String("upstream", "", "Upstream LLM API base URL")
+	apply := fs.Bool("apply", false, "Auto-apply configuration changes")
+	fs.Parse(os.Args[2:])
+
+	// 支持位置参数: headroom wrap claude
+	if *agent == "" && fs.NArg() > 0 {
+		*agent = fs.Arg(0)
+	}
+
+	if *agent == "" {
+		logger.Error("wrap requires an agent type")
+		fmt.Fprintf(os.Stderr, "Usage: headroom wrap <claude|codex|copilot|generic> [--apply] [--port=18787]\n")
+		os.Exit(1)
+	}
+
+	if err := wrap.Run(wrap.Config{
+		Agent:    *agent,
+		Port:     *port,
+		Upstream: *upstream,
+		Apply:    *apply,
+	}); err != nil {
+		logger.Error("wrap error", "err", err)
+		os.Exit(1)
+	}
+}
+
 func printUsage() {
 	fmt.Fprintf(os.Stderr, "headroom-go %s — AI 上下文压缩层\n\n%s", headroom.Version, `Usage:
   headroom <command> [flags]
@@ -189,11 +237,16 @@ func printUsage() {
 Commands:
   compress    压缩 stdin 或文件
   proxy       启动 HTTP 代理（OpenAI 兼容）
+  mcp         启动 MCP Server（stdio 模式）
+  wrap        启动代理 + 配置 IDE/Agent
   version     打印版本
 
 Examples:
   cat long.txt | headroom compress --stats
   headroom compress --input=input.json --output=output.txt
   headroom proxy --port=8787
+  headroom mcp serve
+  headroom wrap claude
+  headroom wrap codex --apply
 `)
 }
