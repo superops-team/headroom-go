@@ -2,6 +2,27 @@
 
 All notable changes to this project will be documented in this file.
 
+## [v0.8.0] - 2026-06-23
+
+### Added
+
+- **Go 生态集成**: 3 个框架集成 + K8s sidecar
+  - `integrations/go-openai/` — OpenAI Go SDK 透明压缩
+  - `integrations/langchaingo/` — Document Compressor
+  - `integrations/ollama/` — Ollama HTTP 中间件
+  - `integrations/k8s/` — Sidecar 部署清单
+- **K8s Helm Chart**: `charts/headroom/` — standalone + sidecar 双模式
+- **文档站**: `docs/` — Starlight 文档站（安装/快速开始/CLI/API 参考）
+- **流式响应支持**: proxy 支持 SSE streaming（`stream:true`）
+- **Homebrew formula**: `homebrew/headroom.rb`
+- **Benchmark 页**: 自动化 benchmark + GitHub Pages 报告
+- **CI 扩展**: docs.yml + benchmark.yml
+
+### Changed
+
+- proxy: 流式请求从返回 400 改为透传 SSE 流
+- 版本号升级至 v0.8.0
+
 ## [v0.7.0] - 2026-06-23
 
 ### Added

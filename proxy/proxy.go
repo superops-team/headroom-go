@@ -121,8 +121,7 @@ func NewProxy(cfg Config) http.Handler {
 			return
 		}
 
-		// 检查 stream: true → 拒绝流式（v0.3）
-		// 兼容 bool 与 string 两种 JSON 值（上游 API 可能有不同表示）
+		// 检查 stream: true → 流式处理
 		isStream := false
 		switch s := payload["stream"].(type) {
 		case bool:
@@ -131,14 +130,6 @@ func NewProxy(cfg Config) http.Handler {
 			if s == "true" || s == "True" || s == "1" {
 				isStream = true
 			}
-		case nil:
-			// 不存在，不处理
-		default:
-			// 其他类型（如 float64=1）：安全起见，不视为流式
-		}
-		if isStream {
-			writeError(w, http.StatusBadRequest, "streaming not supported in "+headroom.Version)
-			return
 		}
 
 		// 将 messages 反序列化为 []headroom.Message
@@ -168,7 +159,11 @@ func NewProxy(cfg Config) http.Handler {
 			return
 		}
 
-		forwardToUpstream(w, r, cfg, client, newBody)
+		if isStream {
+			forwardStreamToUpstream(w, r, cfg, client, newBody, compressed)
+		} else {
+			forwardToUpstream(w, r, cfg, client, newBody)
+		}
 	})
 
 	return mux
@@ -183,11 +178,9 @@ func forwardToUpstream(w http.ResponseWriter, r *http.Request, cfg Config, clien
 		return
 	}
 	req.Header.Set("Content-Type", "application/json")
-	// 转发 Request ID 到上游
 	if reqID := r.Header.Get("X-Request-ID"); reqID != "" {
 		req.Header.Set("X-Request-ID", reqID)
 	}
-	// 转发客户端的 Authorization（或回落到配置的 APIKey）
 	if auth := r.Header.Get("Authorization"); auth != "" {
 		req.Header.Set("Authorization", auth)
 	} else if cfg.APIKey != "" {
@@ -201,7 +194,6 @@ func forwardToUpstream(w http.ResponseWriter, r *http.Request, cfg Config, clien
 	}
 	defer resp.Body.Close()
 
-	// 透传响应头
 	for k, vs := range resp.Header {
 		for _, v := range vs {
 			w.Header().Add(k, v)
@@ -209,4 +201,66 @@ func forwardToUpstream(w http.ResponseWriter, r *http.Request, cfg Config, clien
 	}
 	w.WriteHeader(resp.StatusCode)
 	io.Copy(w, resp.Body)
+}
+
+// forwardStreamToUpstream 处理 SSE 流式响应。
+func forwardStreamToUpstream(w http.ResponseWriter, r *http.Request, cfg Config, client *http.Client, body []byte, result *headroom.Result) {
+	url := strings.TrimRight(cfg.UpstreamBaseURL, "/") + "/chat/completions"
+	req, err := http.NewRequestWithContext(r.Context(), http.MethodPost, url, bytes.NewReader(body))
+	if err != nil {
+		writeError(w, http.StatusBadGateway, fmt.Sprintf("upstream request failed: %s", err.Error()))
+		return
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "text/event-stream")
+	if reqID := r.Header.Get("X-Request-ID"); reqID != "" {
+		req.Header.Set("X-Request-ID", reqID)
+	}
+	if auth := r.Header.Get("Authorization"); auth != "" {
+		req.Header.Set("Authorization", auth)
+	} else if cfg.APIKey != "" {
+		req.Header.Set("Authorization", "Bearer "+cfg.APIKey)
+	}
+
+	resp, err := client.Do(req)
+	if err != nil {
+		writeError(w, http.StatusBadGateway, fmt.Sprintf("upstream unreachable: %s", err.Error()))
+		return
+	}
+	defer resp.Body.Close()
+
+	// 设置 SSE 响应头
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	w.WriteHeader(resp.StatusCode)
+
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		io.Copy(w, resp.Body)
+		return
+	}
+
+	// 透传 SSE 流
+	buf := make([]byte, 4096)
+	for {
+		n, err := resp.Body.Read(buf)
+		if n > 0 {
+			if _, werr := w.Write(buf[:n]); werr != nil {
+				return
+			}
+			flusher.Flush()
+		}
+		if err != nil {
+			break
+		}
+	}
+
+	// 注入压缩统计（在 [DONE] 之后）
+	if result != nil {
+		stats := fmt.Sprintf("data: {\"headroom_stats\":{\"original_tokens\":%d,\"compressed_tokens\":%d,\"savings\":%.4f}}\n\n",
+			result.OriginalTokens, result.CompressedTokens, result.Savings)
+		w.Write([]byte(stats))
+		flusher.Flush()
+	}
 }

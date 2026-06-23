@@ -134,8 +134,8 @@ func TestProxy_ChatCompletion(t *testing.T) {
 	}
 }
 
-// stream: true → 返回 400
-func TestProxy_StreamRejected(t *testing.T) {
+// stream: true → 现在支持流式，返回 200
+func TestProxy_StreamAccepted(t *testing.T) {
 	mock := newUpstreamMock()
 	defer mock.Close()
 
@@ -153,20 +153,32 @@ func TestProxy_StreamRejected(t *testing.T) {
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != 400 {
-		t.Errorf("got status %d, want 400", resp.StatusCode)
+	if resp.StatusCode != 200 {
+		t.Errorf("got status %d, want 200", resp.StatusCode)
 	}
-	assertJSONError(t, resp, http.StatusBadRequest, "streaming not supported")
+	// 验证 Content-Type 是 text/event-stream
+	ct := resp.Header.Get("Content-Type")
+	if ct != "text/event-stream" {
+		t.Errorf("got Content-Type %q, want text/event-stream", ct)
+	}
 }
 
-func TestProxy_SpecDStreamStringRejected(t *testing.T) {
-	p := NewProxy(Config{CompressOptions: headroom.DefaultOptions()})
+func TestProxy_StreamStringAccepted(t *testing.T) {
+	mock := newUpstreamMock()
+	defer mock.Close()
+
+	p := NewProxy(Config{
+		UpstreamBaseURL: mock.URL,
+		CompressOptions: headroom.DefaultOptions(),
+	})
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"stream":"true","messages":[{"role":"user","content":"hi"}]}`))
 	rec := httptest.NewRecorder()
 	p.ServeHTTP(rec, req)
 	resp := rec.Result()
 	defer resp.Body.Close()
-	assertJSONError(t, resp, http.StatusBadRequest, "streaming not supported")
+	if resp.StatusCode != 200 {
+		t.Errorf("got status %d, want 200", resp.StatusCode)
+	}
 }
 
 func TestProxy_SpecDInvalidMessagesReturnsJSON(t *testing.T) {
